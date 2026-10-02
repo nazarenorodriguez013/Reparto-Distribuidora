@@ -1,8 +1,9 @@
-// Servidor para Railway: sirve la app y la ruta /api/leer. Sin dependencias.
+// Servidor para Railway: sirve la app, el login, la lectura de fotos y las planillas (Postgres).
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { Pool } = require('pg');
 const leer = require('./api/leer.js');
 
 const USER = process.env.APP_USER || 'kevin';
@@ -16,37 +17,92 @@ function validToken(h) {
   return !!sig && Number(exp) > Date.now() && same(sig, sign(exp));
 }
 
+const DB_URL = process.env.DATABASE_URL;
+const pool = DB_URL ? new Pool({
+  connectionString: DB_URL,
+  ssl: /railway\.internal|localhost|127\.0\.0\.1/.test(DB_URL) ? false : { rejectUnauthorized: false },
+}) : null;
+const dbReady = pool ? pool.query(`CREATE TABLE IF NOT EXISTS planillas (
+  id SERIAL PRIMARY KEY,
+  data JSONB NOT NULL DEFAULT '{"clients":[]}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`).catch(e => console.error('DB:', e.message)) : null;
+
 const TYPES = { '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml' };
 const FILES = ['index.html', 'manifest.json', 'icon.svg'];
 
-http.createServer((req, res) => {
+const send = (res, code, obj) => { res.statusCode = code; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(obj)); };
+function body(req, limit = 15e6) {
+  return new Promise(ok => {
+    let raw = '';
+    req.on('data', c => { raw += c; if (raw.length > limit) req.destroy(); });
+    req.on('end', () => { try { ok(JSON.parse(raw || '{}')); } catch { ok({}); } });
+  });
+}
+
+async function planillas(req, res, url) {
+  if (!pool) return send(res, 503, { error: 'Base de datos no configurada' });
+  await dbReady;
+  const m = /^\/api\/planillas(?:\/(\d+|ultima))?$/.exec(url);
+  if (!m) return send(res, 404, { error: 'No encontrado' });
+  const id = m[1];
+  if (!id && req.method === 'GET') {
+    const r = await pool.query(`SELECT id, created_at, updated_at,
+      jsonb_array_length(data->'clients') AS clientes,
+      (SELECT COALESCE(SUM((c->>'total')::numeric),0) FROM jsonb_array_elements(data->'clients') c) AS total
+      FROM planillas ORDER BY id DESC LIMIT 60`);
+    return send(res, 200, { planillas: r.rows });
+  }
+  if (!id && req.method === 'POST') {
+    const b = await body(req);
+    const r = await pool.query('INSERT INTO planillas (data) VALUES ($1) RETURNING id', [JSON.stringify({ clients: Array.isArray(b.clients) ? b.clients : [] })]);
+    return send(res, 200, { id: r.rows[0].id });
+  }
+  if (id === 'ultima' && req.method === 'GET') {
+    const r = await pool.query('SELECT id, data FROM planillas ORDER BY id DESC LIMIT 1');
+    return send(res, 200, r.rows[0] || {});
+  }
+  if (id && req.method === 'GET') {
+    const r = await pool.query('SELECT id, data FROM planillas WHERE id=$1', [id]);
+    return r.rows[0] ? send(res, 200, r.rows[0]) : send(res, 404, { error: 'No existe' });
+  }
+  if (id && req.method === 'PUT') {
+    const b = await body(req);
+    if (!Array.isArray(b.clients)) return send(res, 400, { error: 'Datos inválidos' });
+    await pool.query('UPDATE planillas SET data=$2, updated_at=now() WHERE id=$1', [id, JSON.stringify({ clients: b.clients })]);
+    return send(res, 200, { ok: true });
+  }
+  if (id && req.method === 'DELETE') {
+    await pool.query('DELETE FROM planillas WHERE id=$1', [id]);
+    return send(res, 200, { ok: true });
+  }
+  send(res, 405, { error: 'Método no permitido' });
+}
+
+http.createServer(async (req, res) => {
   const url = req.url.split('?')[0];
-  if (url === '/api/login' && req.method === 'POST') {
-    let raw = '';
-    req.on('data', c => { raw += c; if (raw.length > 1e4) req.destroy(); });
-    req.on('end', () => {
-      let b = {}; try { b = JSON.parse(raw); } catch {}
-      res.setHeader('content-type', 'application/json');
+  try {
+    if (url === '/api/login' && req.method === 'POST') {
+      const b = await body(req, 1e4);
       const ok = typeof b.user === 'string' && typeof b.pass === 'string' && same(b.user, USER) && same(b.pass, PASS);
-      res.statusCode = ok ? 200 : 401;
-      res.end(JSON.stringify(ok ? { token: makeToken() } : { error: 'Usuario o contraseña incorrectos' }));
-    });
-    return;
+      return send(res, ok ? 200 : 401, ok ? { token: makeToken() } : { error: 'Usuario o contraseña incorrectos' });
+    }
+    if (url.startsWith('/api/')) {
+      if (!validToken(req.headers.authorization)) return send(res, 401, { error: 'No autorizado' });
+      if (url === '/api/leer') {
+        req.body = await body(req);
+        res.status = c => { res.statusCode = c; return res; };
+        res.json = o => send(res, res.statusCode || 200, o);
+        return await leer(req, res);
+      }
+      return await planillas(req, res, url);
+    }
+    const name = url === '/' ? 'index.html' : url.slice(1);
+    if (!FILES.includes(name)) { res.statusCode = 404; return res.end('No encontrado'); }
+    res.setHeader('content-type', TYPES[path.extname(name)]);
+    fs.createReadStream(path.join(__dirname, name)).pipe(res);
+  } catch (e) {
+    console.error(e);
+    if (!res.headersSent) send(res, 500, { error: 'Error interno' });
   }
-  if (url === '/api/leer') {
-    if (!validToken(req.headers.authorization)) { res.statusCode = 401; res.setHeader('content-type', 'application/json'); return res.end('{"error":"No autorizado"}'); }
-    let raw = '';
-    req.on('data', c => { raw += c; if (raw.length > 15e6) req.destroy(); });
-    req.on('end', async () => {
-      try { req.body = JSON.parse(raw || '{}'); } catch { req.body = {}; }
-      res.status = c => { res.statusCode = c; return res; };
-      res.json = o => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(o)); };
-      try { await leer(req, res); } catch (e) { res.status(500).json({ error: 'Error interno' }); }
-    });
-    return;
-  }
-  const name = url === '/' ? 'index.html' : url.slice(1);
-  if (!FILES.includes(name)) { res.statusCode = 404; return res.end('No encontrado'); }
-  res.setHeader('content-type', TYPES[path.extname(name)]);
-  fs.createReadStream(path.join(__dirname, name)).pipe(res);
 }).listen(process.env.PORT || 3000);
