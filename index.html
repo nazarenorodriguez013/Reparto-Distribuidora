@@ -7,7 +7,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>Reparto</title>
+<title>Reparto Netle</title>
 <style>
 :root{--bg:#f3f4f6;--card:#fff;--tx:#111827;--mut:#6b7280;--pri:#1d4ed8;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--bd:#d1d5db}
 @media (prefers-color-scheme:dark){:root{--bg:#0f172a;--card:#1e293b;--tx:#f1f5f9;--mut:#94a3b8;--pri:#3b82f6;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--bd:#334155}}
@@ -55,7 +55,7 @@ img.foto{width:100%;max-height:260px;object-fit:contain;border-radius:8px;backgr
 </style>
 </head>
 <body>
-<header><span>🚚 Reparto</span><button id="reset">Nueva planilla</button></header>
+<header><span>🚚 Reparto Netle</span><span><button id="reset">Nueva planilla</button> <button id="logout">Salir</button></span></header>
 <main id="app"></main>
 <input type="file" id="foto" accept="image/*" capture="environment" hidden>
 <nav>
@@ -76,6 +76,9 @@ const KEY = 'reparto-v1';
 
 let S = load() || {photo:null, clients:[], tab:'planilla'};
 let ordering = null;      // modo "ordenar tocando": array de ids ya tocados
+let TOKEN = null;
+try{ TOKEN = localStorage.getItem('reparto-token'); }catch(e){}
+let loginErr = '', loginUser = '';
 let sel = null;           // cliente abierto en 'Siguientes'
 let mixOpen = null;       // id de cliente con panel mixto abierto
 let draft = [{name:'',total:''}];   // filas por cargar (cliente a la izquierda, monto a la derecha)
@@ -100,9 +103,33 @@ function addClient(name, total, addr){
 
 /* ---------- Render ---------- */
 function render(){
+  const logged = !!TOKEN;
+  document.querySelector('nav').style.display = document.querySelector('header span:last-child').style.display = logged ? '' : 'none';
+  if(!logged){ $('#app').innerHTML = vLogin(); return; }
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on', b.dataset.t===S.tab));
   $('#app').innerHTML = S.tab==='planilla' ? vPlanilla() : S.tab==='recorrido' ? vRecorrido() : vResumen();
   save();
+}
+
+function vLogin(){
+  return `<div class="card" style="margin-top:30px">
+    <div class="big" style="text-align:center">🚚 Reparto Netle</div>
+    <h2 style="margin-top:14px">Usuario</h2><input id="l_user" autocapitalize="none" autocomplete="username" value="${esc(loginUser)}">
+    <h2 style="margin-top:10px">Contraseña</h2><input id="l_pass" type="password" autocomplete="current-password">
+    ${loginErr?`<div class="hint" style="margin-top:10px;background:#fee2e2;color:#7f1d1d">${esc(loginErr)}</div>`:''}
+    <div class="row" style="margin-top:14px"><button class="btn" data-a="login">Ingresar</button></div></div>`;
+}
+function logout(){ TOKEN=null; try{ localStorage.removeItem('reparto-token'); }catch(e){} loginErr=''; render(); }
+async function doLogin(){
+  loginUser = $('#l_user').value.trim();
+  try{
+    const r = await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user:$('#l_user').value.trim(),pass:$('#l_pass').value})});
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.error||'error');
+    TOKEN = d.token; loginErr='';
+    try{ localStorage.setItem('reparto-token', TOKEN); }catch(e){}
+  }catch(err){ loginErr = err.message==='Failed to fetch' ? 'Sin conexión' : err.message; }
+  render();
 }
 
 function vPlanilla(){
@@ -240,6 +267,7 @@ function setPay(c, k){
 }
 
 document.addEventListener('click', e=>{
+  if(e.target.id==='logout') return logout();
   if(e.target.closest('#navfoto')){ $('#foto').click(); return; }
   const nav = e.target.closest('nav button[data-t]');
   if(nav){ S.tab=nav.dataset.t; mixOpen=null; return render(); }
@@ -251,6 +279,7 @@ document.addEventListener('click', e=>{
   const a = el.dataset.a, id = el.dataset.id, c = id&&get(id);
   const i = c ? S.clients.indexOf(c) : -1;
   switch(a){
+    case 'login': return doLogin();
     case 'drow-add': draft.push({name:'',total:''}); break;
     case 'drow-del': draft.splice(+el.dataset.i,1); if(!draft.length) draft.push({name:'',total:''}); break;
     case 'bulk':
@@ -283,6 +312,8 @@ function a_finishOrder(){
   ordering = null;
 }
 
+document.addEventListener('keydown', e=>{ if(e.key==='Enter' && e.target.id==='l_pass') doLogin(); });
+
 document.addEventListener('input', e=>{
   const f = e.target.dataset.f; if(!f) return;
   if(f==='dname'||f==='dtot'){ draft[+e.target.dataset.i][f==='dname'?'name':'total']=e.target.value; return; }
@@ -312,7 +343,8 @@ async function runOCR(){
   if(ocrBusy) return;
   try{
     ocrBusy='Leyendo con IA…'; render();
-    const r = await fetch('/api/leer',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({image:S.photo})});
+    const r = await fetch('/api/leer',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+TOKEN},body:JSON.stringify({image:S.photo})});
+    if(r.status===401){ ocrBusy=''; S.photo=null; return logout(); }
     const d = await r.json();
     if(!r.ok) throw new Error(d.error||'error');
     const rows = d.clients.map(c=>({name:c.name, total:c.total||''}));
