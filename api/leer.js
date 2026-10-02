@@ -21,8 +21,8 @@ module.exports = async (req, res) => {
         content: [
           { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } },
           { type: 'text', text: 'Esta es una planilla de reparto. Extraé cada cliente en el orden en que aparece. ' +
-            'Respondé SOLO con un JSON array, sin texto extra: [{"name":"cliente","addr":"dirección o vacío","total":número}]. ' +
-            'total es el importe a cobrar como número (sin símbolo ni separador de miles, punto decimal). Si no se lee, usá 0.' },
+            'Respondé SOLO con un JSON array, sin texto extra: [{"name":"cliente","addr":"dirección o vacío","importe":"importe a cobrar tal cual está impreso"}]. ' +
+            'En importe copiá solo los dígitos y separadores exactamente como se ven, sin interpretarlos ni convertirlos. Si no se lee, usá "0".' },
         ],
       }],
     }),
@@ -31,7 +31,13 @@ module.exports = async (req, res) => {
   if (!r.ok) return res.status(502).json({ error: data.error?.message || 'Error de la API' });
   const text = (data.content || []).map(b => b.text || '').join('');
   try {
-    const clients = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1));
+    const raw = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1));
+    // Los importes de la planilla siempre tienen los últimos dos dígitos como decimales.
+    const clients = raw.map(c => ({
+      name: String(c.name || '').trim(),
+      addr: String(c.addr || '').trim(),
+      total: (parseInt(String(c.importe ?? c.total ?? '').replace(/\D/g, ''), 10) || 0) / 100,
+    }));
     res.json({ clients });
   } catch (e) {
     res.status(502).json({ error: 'No se pudo interpretar la respuesta' });

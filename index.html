@@ -219,7 +219,8 @@ function vHistorial(){
 }
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const money = n => '$ ' + (Math.round(n*100)/100).toLocaleString('es-AR',{minimumFractionDigits:0,maximumFractionDigits:2});
+const money = n => '$ ' + (Math.round(n*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtInput = n => n ? String(Math.round(n*100)/100).replace('.',',') : '';
 const sum = c => KEYS.reduce((a,k)=>a+(c.pay[k]||0),0);
 const num = v => { v=String(v).trim().replace(/\./g,'').replace(',','.'); const n=parseFloat(v); return isNaN(n)?0:n; };
 const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,6);
@@ -302,7 +303,7 @@ function vPlanilla(){
         <h2>Editar cliente</h2>
         <input data-f="cname" data-id="${x.id}" value="${esc(x.name)}" placeholder="Cliente">
         <input data-f="caddr" data-id="${x.id}" value="${esc(x.addr||'')}" placeholder="Dirección" style="margin-top:8px">
-        <input data-f="total" data-id="${x.id}" inputmode="decimal" value="${x.total||''}" placeholder="Monto $" style="margin-top:8px;text-align:right">
+        <input data-f="total" data-id="${x.id}" inputmode="decimal" value="${fmtInput(x.total)}" placeholder="Monto $" style="margin-top:8px;text-align:right">
         <div class="row" style="margin-top:10px"><button class="btn bad" data-a="del" data-id="${x.id}">Borrar</button><button class="btn" data-a="pedit" data-id="${x.id}">Listo ✔</button></div></div>`
       :`<div class="item" data-a="pedit" data-id="${x.id}">
         <div class="nm"><b>${esc(x.name)}</b></div>
@@ -320,7 +321,7 @@ function payButtons(c){
 function mixPanel(c){
   const rest = c.total - sum(c);
   return `<div class="mix">${METHODS.filter(m=>m[0]!=='mix').map(([k,l])=>
-    `<div><label>${l}</label><input data-f="mix" data-k="${k}" data-id="${c.id}" inputmode="decimal" value="${c.pay[k]||''}" placeholder="0"></div>`).join('')}</div>
+    `<div><label>${l}</label><input data-f="mix" data-k="${k}" data-id="${c.id}" inputmode="decimal" value="${fmtInput(c.pay[k])}" placeholder="0"></div>`).join('')}</div>
     <div class="mut" id="mixrest-${c.id}">${restTxt(rest)}</div>`;
 }
 const restTxt = r => r===0?'Completo ✔': r>0?`Falta asignar ${money(r)}`:`Te pasaste ${money(-r)}`;
@@ -528,7 +529,7 @@ async function runOCR(){
     if(r.status===401){ ocrBusy=''; S.photo=null; return logout(); }
     const d = await r.json();
     if(!r.ok) throw new Error(d.error||'error');
-    const dd = dedupe(d.clients.map(c=>({name:c.name, addr:c.addr||'', total:c.total||''})));
+    const dd = dedupe(d.clients.map(c=>({name:c.name, addr:c.addr||'', total:fmtInput(c.total)})));
     dupMsg = dd.dups ? `Se quitaron ${dd.dups} repetido${dd.dups>1?'s':''} de la foto (mismo nombre e importe).` : '';
     if(dd.rows.length){ photoRows = dd.rows; pedi = null; }
     else alert('No se encontraron clientes. Cargalos a mano.');
