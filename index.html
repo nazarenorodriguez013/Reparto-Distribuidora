@@ -55,10 +55,23 @@ img.foto{width:100%;max-height:260px;object-fit:contain;border-radius:8px;backgr
 .mix label{font-size:13px;color:var(--mut)}
 .cur{border:2px solid var(--pri)}
 .hint{background:#fef3c7;color:#78350f;padding:8px;border-radius:8px;font-size:14px;margin-bottom:8px}
+body.login{background:linear-gradient(160deg,var(--pri),#0f172a);min-height:100vh;padding-bottom:0}
+.lg{min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:24px}
+.lg .logo{width:96px;height:96px;border-radius:50%;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:48px;margin-bottom:14px;box-shadow:0 0 0 8px rgba(255,255,255,.1)}
+.lg h1{color:#fff;margin:0;font-size:30px;letter-spacing:.5px}
+.lg p{color:rgba(255,255,255,.75);margin:4px 0 22px}
+.lg .box{width:100%;max-width:380px;background:var(--card);border-radius:20px;padding:22px;box-shadow:0 20px 40px rgba(0,0,0,.35)}
+.lg label{display:block;font-size:13px;font-weight:700;color:var(--mut);margin:0 0 6px;text-transform:uppercase;letter-spacing:.5px}
+.lg .pw{position:relative}
+.lg .pw button{position:absolute;right:6px;top:4px;height:38px;border:0;background:none;color:var(--pri);font-weight:700;font-size:14px}
+.lg .btn{width:100%;margin-top:6px;min-height:52px;font-size:17px}
+.sw{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 14px}
+.sw button{width:52px;height:52px;border-radius:50%;border:3px solid var(--card);box-shadow:0 0 0 2px var(--bd)}
+.sw button.on{box-shadow:0 0 0 4px var(--tx)}
 </style>
 </head>
 <body>
-<header><span>🚚 Reparto Nestle</span><span><button id="histbtn">Historial</button> <button id="reset">Nueva planilla</button> <button id="logout">Salir</button></span></header>
+<header><span>🚚 Reparto Nestle</span><span><button id="histbtn">Historial</button> <button id="cfgbtn">Configuración</button> <button id="reset">Nueva planilla</button> <button id="logout">Salir</button></span></header>
 <div id="syncmsg" class="hint" style="display:none;margin:8px 12px"></div>
 <main id="app"></main>
 <input type="file" id="foto" accept="image/*" capture="environment" hidden>
@@ -142,6 +155,25 @@ async function loadHist(){
   render();
 }
 const fechaLarga = iso => new Date(iso).toLocaleString('es-AR',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+const COLORS = ['#1d4ed8','#dc2626','#16a34a','#ea580c','#7c3aed','#0891b2','#db2777','#334155'];
+let COLOR = null;
+try{ COLOR = localStorage.getItem('reparto-color'); }catch(e){}
+function applyColor(c){
+  if(!c) return;
+  COLOR = c; document.documentElement.style.setProperty('--pri', c);
+  const m = document.querySelector('meta[name=theme-color]'); if(m) m.content = c;
+  try{ localStorage.setItem('reparto-color', c); }catch(e){}
+}
+applyColor(COLOR);
+function vConfig(){
+  const cur = (COLOR||COLORS[0]).toLowerCase();
+  return `<div class="card"><h2>Color de la app</h2>
+    <div class="sw">${COLORS.map(c=>`<button style="background:${c}" class="${c===cur?'on':''}" data-a="color" data-c="${c}"></button>`).join('')}</div>
+    <h2>Otro color</h2>
+    <input type="color" id="colorpick" value="${cur}" style="height:56px;padding:4px">
+    <div class="row" style="margin-top:14px"><button class="btn sec" data-a="color" data-c="${COLORS[0]}">Volver al original</button></div>
+  </div>`;
+}
 function vHistorial(){
   if(hist===null) return '<div class="card">Cargando…</div>';
   if(hist==='off') return '<div class="card">La base de datos no está configurada en el servidor.</div>';
@@ -167,20 +199,26 @@ function addClient(name, total, addr){
 /* ---------- Render ---------- */
 function render(){
   const logged = !!TOKEN;
-  document.querySelector('nav').style.display = $('#navfoto').style.display = document.querySelector('header span:last-child').style.display = logged ? '' : 'none';
+  document.querySelector('nav').style.display = $('#navfoto').style.display = document.querySelector('header').style.display = logged ? '' : 'none';
+  document.body.classList.toggle('login', !logged);
   if(!logged){ $('#app').innerHTML = vLogin(); return; }
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on', b.dataset.t===S.tab));
-  $('#app').innerHTML = S.tab==='planilla' ? vPlanilla() : S.tab==='recorrido' ? vRecorrido() : S.tab==='historial' ? vHistorial() : vResumen();
+  $('#app').innerHTML = S.tab==='planilla' ? vPlanilla() : S.tab==='recorrido' ? vRecorrido() : S.tab==='historial' ? vHistorial() : S.tab==='config' ? vConfig() : vResumen();
   save();
 }
 
 function vLogin(){
-  return `<div class="card" style="margin-top:30px">
-    <div class="big" style="text-align:center">🚚 Reparto Nestle</div>
-    <h2 style="margin-top:14px">Usuario</h2><input id="l_user" autocapitalize="none" autocomplete="username" value="${esc(loginUser)}">
-    <h2 style="margin-top:10px">Contraseña</h2><input id="l_pass" type="password" autocomplete="current-password">
-    ${loginErr?`<div class="hint" style="margin-top:10px;background:#fee2e2;color:#7f1d1d">${esc(loginErr)}</div>`:''}
-    <div class="row" style="margin-top:14px"><button class="btn" data-a="login">Ingresar</button></div></div>`;
+  return `<div class="lg">
+    <div class="logo">🚚</div>
+    <h1>Reparto Nestle</h1><p>Ingresá para continuar</p>
+    <div class="box">
+      <label for="l_user">Usuario</label>
+      <input id="l_user" autocapitalize="none" autocomplete="username" value="${esc(loginUser)}" style="margin-bottom:14px">
+      <label for="l_pass">Contraseña</label>
+      <div class="pw"><input id="l_pass" type="password" autocomplete="current-password"><button type="button" data-a="showpass">Ver</button></div>
+      ${loginErr?`<div class="hint" style="margin:12px 0 0;background:#fee2e2;color:#7f1d1d">${esc(loginErr)}</div>`:''}
+      <button class="btn" style="margin-top:18px" data-a="login">Ingresar</button>
+    </div></div>`;
 }
 function logout(){ TOKEN=null; try{ localStorage.removeItem('reparto-token'); }catch(e){} loginErr=''; render(); }
 async function doLogin(){
@@ -328,6 +366,7 @@ document.addEventListener('click', e=>{
   if(e.target.closest('#navfoto')){ $('#foto').click(); return; }
   const nav = e.target.closest('nav button[data-t]');
   if(nav){ S.tab=nav.dataset.t; mixOpen=null; ordering=null; editId=null; return render(); }
+  if(e.target.id==='cfgbtn'){ S.tab='config'; mixOpen=null; sel=null; render(); return; }
   if(e.target.id==='histbtn'){ S.tab='historial'; mixOpen=null; sel=null; loadHist(); return; }
   if(e.target.id==='reset'){
     if(confirm('¿Empezar una planilla nueva? La actual queda guardada en el historial.')){
@@ -340,6 +379,8 @@ document.addEventListener('click', e=>{
   const i = c ? S.clients.indexOf(c) : -1;
   switch(a){
     case 'login': return doLogin();
+    case 'showpass': { const i=$('#l_pass'); i.type = i.type==='password'?'text':'password'; el.textContent = i.type==='password'?'Ver':'Ocultar'; return; }
+    case 'color': applyColor(el.dataset.c); break;
     case 'hist-open': api('GET','/api/planillas/'+id).then(d=>{ S.pid=d.id; S.clients=d.data.clients||[]; S.tab='planilla'; render(); }).catch(()=>setSync('No se pudo abrir la planilla.')); return;
     case 'hist-del': if(!confirm('¿Borrar esta planilla del historial?')) return;
       api('DELETE','/api/planillas/'+id).then(()=>{ if(+id===S.pid){ S.pid=null; S.clients=[]; } loadHist(); }).catch(()=>setSync('No se pudo borrar.')); return;
@@ -392,6 +433,7 @@ document.addEventListener('contextmenu', e=>{ if(e.target.closest('[data-lp]')) 
 document.addEventListener('keydown', e=>{ if(e.key==='Enter' && e.target.id==='l_pass') doLogin(); });
 
 document.addEventListener('input', e=>{
+  if(e.target.id==='colorpick'){ applyColor(e.target.value); return; }
   const f = e.target.dataset.f; if(!f) return;
   if(f==='cname'){ const c=get(e.target.dataset.id); if(c){ c.name=e.target.value; save(); } return; }
   if(f==='dname'||f==='dtot'){ draft[+e.target.dataset.i][f==='dname'?'name':'total']=e.target.value; return; }
