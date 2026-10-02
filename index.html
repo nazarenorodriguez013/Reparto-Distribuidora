@@ -75,7 +75,7 @@ let S = load() || {photo:null, clients:[], tab:'planilla'};
 let ordering = null;      // modo "ordenar tocando": array de ids ya tocados
 let sel = null;           // cliente abierto en 'Siguientes'
 let mixOpen = null;       // id de cliente con panel mixto abierto
-let ocrText = '';
+let draft = [{name:'',total:''}];   // filas por cargar (cliente a la izquierda, monto a la derecha)
 let ocrBusy = '';
 
 function load(){ try{ return JSON.parse(localStorage.getItem(KEY)); }catch(e){ return null; } }
@@ -116,12 +116,13 @@ function vPlanilla(){
     <div class="mut" style="margin-top:6px">La IA puede equivocarse: revisá la lista antes de cargar.</div>`:''}
   </div>
   <div class="card">
-    <h2>2. Clientes (uno por línea: <i>Nombre ; monto</i>)</h2>
-    <textarea id="bulk" placeholder="Kiosco Pérez ; 15.300&#10;Almacén Sol ; 8.200">${esc(ocrText)}</textarea>
-    <div class="row" style="margin-top:8px"><button class="btn" data-a="bulk">Cargar a la lista</button></div>
-    <h2 style="margin-top:14px">O agregar uno</h2>
-    <div class="row"><input id="n_name" placeholder="Cliente"><input id="n_tot" inputmode="decimal" placeholder="Monto" style="max-width:110px"></div>
-    <div class="row" style="margin-top:8px"><input id="n_addr" placeholder="Dirección (opcional)"><button class="btn fit" data-a="add">Agregar</button></div>
+    <h2>2. Clientes y montos</h2>
+    <div class="row mut" style="margin-bottom:4px"><span>Cliente</span><span style="flex:none;width:130px;text-align:right">Monto</span><span class="fit" style="width:48px"></span></div>
+    ${draft.map((d,i)=>`<div class="row" style="margin-bottom:8px">
+      <input data-f="dname" data-i="${i}" value="${esc(d.name)}" placeholder="Cliente">
+      <input data-f="dtot" data-i="${i}" inputmode="decimal" value="${d.total||''}" placeholder="$" style="flex:none;width:130px;text-align:right">
+      <button class="btn sec sm fit" data-a="drow-del" data-i="${i}">✕</button></div>`).join('')}
+    <div class="row"><button class="btn sec" data-a="drow-add">+ Otro cliente</button><button class="btn" data-a="bulk">Cargar a la lista</button></div>
   </div>
   <div class="card">
     <h2>3. Orden de recorrido (${c.length})</h2>
@@ -130,13 +131,14 @@ function vPlanilla(){
     ${ordering?`<div class="hint">Tocá los clientes en el orden en que los vas a visitar. Van quedando numerados.</div>`:''}
     ${c.length?c.map((x,i)=>{
       const pos = ordering ? ordering.indexOf(x.id)+1 : i+1;
-      return `<div class="item" ${ordering?`data-a="pick" data-id="${x.id}"`:''}>
+      return `<div class="item" style="flex-wrap:wrap" ${ordering?`data-a="pick" data-id="${x.id}"`:''}>
         <span class="n ${ordering&&!pos?'off':''}">${ordering?(pos||'·'):pos}</span>
-        <div class="nm"><b>${esc(x.name)}</b><span class="mut">${esc(x.addr)}</span></div>
-        <input data-f="total" data-id="${x.id}" inputmode="decimal" value="${x.total||''}" placeholder="$" style="width:110px">
-        ${ordering?'':`<button class="btn sec sm" data-a="up" data-id="${x.id}">↑</button>
+        <div class="nm"><b style="white-space:normal">${esc(x.name)}</b><span class="mut">${esc(x.addr)}</span></div>
+        <input data-f="total" data-id="${x.id}" inputmode="decimal" value="${x.total||''}" placeholder="$" style="width:120px;text-align:right">
+        ${ordering?'':`<div style="width:100%;display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn sec sm" data-a="up" data-id="${x.id}">↑</button>
         <button class="btn sec sm" data-a="down" data-id="${x.id}">↓</button>
-        <button class="btn sec sm" data-a="del" data-id="${x.id}">✕</button>`}
+        <button class="btn sec sm" data-a="del" data-id="${x.id}">✕</button></div>`}
       </div>`;}).join(''):'<div class="mut">Todavía no hay clientes.</div>'}
     ${c.length&&!ordering?`<div class="row" style="margin-top:10px"><button class="btn" data-a="go">Empezar recorrido →</button></div>`:''}
   </div>`;
@@ -247,25 +249,18 @@ document.addEventListener('click', e=>{
   const nav = e.target.closest('nav button');
   if(nav){ S.tab=nav.dataset.t; mixOpen=null; return render(); }
   if(e.target.id==='reset'){
-    if(confirm('¿Borrar la planilla actual y empezar una nueva?')){ S={photo:null,clients:[],tab:'planilla'}; ocrText=''; ordering=null; mixOpen=null; render(); }
+    if(confirm('¿Borrar la planilla actual y empezar una nueva?')){ S={photo:null,clients:[],tab:'planilla'}; draft=[{name:'',total:''}]; ordering=null; mixOpen=null; render(); }
     return;
   }
   const el = e.target.closest('[data-a]'); if(!el) return;
   const a = el.dataset.a, id = el.dataset.id, c = id&&get(id);
   const i = c ? S.clients.indexOf(c) : -1;
   switch(a){
-    case 'add': {
-      const n=$('#n_name').value; if(!n.trim()) return;
-      addClient(n, num($('#n_tot').value), $('#n_addr').value); break; }
-    case 'bulk': {
-      const lines = $('#bulk').value.split('\n').map(l=>l.trim()).filter(Boolean);
-      lines.forEach(l=>{
-        let name=l, tot=0;
-        const m = l.match(/^(.*?)[;|\t]\s*\$?\s*([\d.,]+)\s*$/) || l.match(/^(.*?\D)\s+\$?\s*(\d[\d.,]*)\s*$/);
-        if(m){ name=m[1].replace(/[\s\-–:]+$/,''); tot=num(m[2]); }
-        if(name) addClient(name, tot);
-      });
-      ocrText=''; break; }
+    case 'drow-add': draft.push({name:'',total:''}); break;
+    case 'drow-del': draft.splice(+el.dataset.i,1); if(!draft.length) draft.push({name:'',total:''}); break;
+    case 'bulk':
+      draft.forEach(d=>{ if(d.name.trim()) addClient(d.name, num(d.total)); });
+      draft=[{name:'',total:''}]; break;
     case 'del': S.clients.splice(i,1); break;
     case 'up': if(i>0) [S.clients[i-1],S.clients[i]]=[S.clients[i],S.clients[i-1]]; break;
     case 'down': if(i<S.clients.length-1) [S.clients[i+1],S.clients[i]]=[S.clients[i],S.clients[i+1]]; break;
@@ -297,6 +292,7 @@ function a_finishOrder(){
 
 document.addEventListener('input', e=>{
   const f = e.target.dataset.f; if(!f) return;
+  if(f==='dname'||f==='dtot'){ draft[+e.target.dataset.i][f==='dname'?'name':'total']=e.target.value; return; }
   const c = get(e.target.dataset.id); if(!c) return;
   if(f==='total'){ c.total = num(e.target.value);
     if(c.method && c.method!=='mix') c.pay={[c.method]:c.total}; save(); }
@@ -326,8 +322,9 @@ async function runOCR(){
     const r = await fetch('/api/leer',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({image:S.photo})});
     const d = await r.json();
     if(!r.ok) throw new Error(d.error||'error');
-    ocrText = d.clients.map(c=>c.name+' ; '+(c.total||0)).join('\n');
-    if(!ocrText) alert('No se encontraron clientes. Cargalos a mano.');
+    const rows = d.clients.map(c=>({name:c.name, total:c.total||''}));
+    if(rows.length) draft = rows;
+    else alert('No se encontraron clientes. Cargalos a mano.');
   }catch(err){ alert('No se pudo leer la foto ('+err.message+'). Cargá los clientes a mano mirando la foto.'); }
   ocrBusy=''; render();
 }
