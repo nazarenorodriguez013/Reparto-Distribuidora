@@ -107,7 +107,19 @@ try{ USERNAME = localStorage.getItem('reparto-user') || ''; }catch(e){}
 let editId = null;        // cliente abierto para editar en Planilla
 let sel = null;           // cliente abierto en 'Siguientes'
 let mixOpen = null;       // id de cliente con panel mixto abierto
-let draft = [{name:'',total:''}];   // filas por cargar (cliente a la izquierda, monto a la derecha)
+let dupMsg = '';
+const norm = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+const sameKey = (n,t) => norm(n)+'|'+Math.round((typeof t==='number'?t:num(t))*100);
+// quita filas con mismo nombre Y mismo importe (mismo nombre con otro importe se conserva)
+function dedupe(rows, existing=[]){
+  const seen = new Set(existing.map(c=>sameKey(c.name,c.total)));
+  const out = []; let dups = 0;
+  rows.forEach(r=>{ const k=sameKey(r.name,r.total); if(seen.has(k)) dups++; else { seen.add(k); out.push(r); } });
+  return {rows:out, dups};
+}
+let manual = {name:'',total:''};   // formulario de carga manual
+let photoRows = [];               // clientes leídos de la foto, por revisar
+let pedi = null;                  // fila de la foto abierta para editar
 let ocrBusy = '';
 
 function load(){ try{ return JSON.parse(localStorage.getItem(KEY)); }catch(e){ return null; } }
@@ -251,14 +263,23 @@ function vPlanilla(){
   <div class="card">
     <h2>Cargar cliente</h2>
     ${ocrBusy?`<div class="hint">${esc(ocrBusy)}</div>`:''}
-    ${draft.map((d,i)=>`<div style="margin-bottom:12px">
-      <input data-f="dname" data-i="${i}" value="${esc(d.name)}" placeholder="Cliente">
-      <div class="row" style="margin-top:8px">
-        <input data-f="dtot" data-i="${i}" inputmode="decimal" value="${d.total||''}" placeholder="Monto $" style="text-align:right">
-        ${draft.length>1?`<button class="btn sec sm fit" data-a="drow-del" data-i="${i}">✕</button>`:''}
-        ${i===draft.length-1?'<button class="btn" data-a="bulk">Cargar a la lista</button>':''}
-      </div></div>`).join('')}
+    ${dupMsg?`<div class="hint">${esc(dupMsg)}</div>`:''}
+    <input data-f="mname" value="${esc(manual.name)}" placeholder="Cliente">
+    <div class="row" style="margin-top:8px">
+      <input data-f="mtot" inputmode="decimal" value="${manual.total||''}" placeholder="Monto $" style="text-align:right">
+      <button class="btn" data-a="madd">Agregar a la lista</button>
+    </div>
   </div>
+  ${photoRows.length?`<div class="card">
+    <h2>Leídos de la foto (${photoRows.length})</h2>
+    ${photoRows.map((d,i)=>pedi===i?
+      `<div class="card cur" style="margin:8px 0">
+        <input data-f="prname" data-i="${i}" value="${esc(d.name)}" placeholder="Cliente">
+        <input data-f="prtot" data-i="${i}" inputmode="decimal" value="${d.total||''}" placeholder="Monto $" style="margin-top:8px;text-align:right">
+        <div class="row" style="margin-top:10px"><button class="btn bad" data-a="pr-del" data-i="${i}">Quitar</button><button class="btn" data-a="pr-edit" data-i="${i}">Listo ✔</button></div></div>`
+      :`<div class="item" data-a="pr-edit" data-i="${i}"><div class="nm"><b>${esc(d.name)||'(sin nombre)'}</b></div><b>${money(num(d.total))}</b></div>`).join('')}
+    <div class="row" style="margin-top:12px"><button class="btn" data-a="padd">Agregar a la lista</button></div>
+  </div>`:''}
   <div class="card">
     <h2>Clientes en recorrido (${c.length})</h2>
     ${c.length?[...c].sort((x,y)=>x.name.localeCompare(y.name,'es')).map(x=>editId===x.id?
@@ -384,7 +405,7 @@ document.addEventListener('click', e=>{
   if(e.target.id==='histbtn'){ S.tab='historial'; mixOpen=null; sel=null; loadHist(); return; }
   if(e.target.id==='reset'){
     if(confirm('¿Empezar una planilla nueva? La actual queda guardada en el historial.')){
-      (syncTimer ? syncSave() : Promise.resolve()).then(()=>{ S={photo:null,clients:[],tab:'planilla'}; draft=[{name:'',total:''}]; ordering=null; mixOpen=null; render(); });
+      (syncTimer ? syncSave() : Promise.resolve()).then(()=>{ S={photo:null,clients:[],tab:'planilla'}; manual={name:'',total:''}; photoRows=[]; pedi=null; ordering=null; mixOpen=null; render(); });
     }
     return;
   }
@@ -398,11 +419,19 @@ document.addEventListener('click', e=>{
     case 'hist-open': api('GET','/api/planillas/'+id).then(d=>{ S.pid=d.id; S.clients=d.data.clients||[]; S.tab='planilla'; render(); }).catch(()=>setSync('No se pudo abrir la planilla.')); return;
     case 'hist-del': if(!confirm('¿Borrar esta planilla del historial?')) return;
       api('DELETE','/api/planillas/'+id).then(()=>{ if(+id===S.pid){ S.pid=null; S.clients=[]; } loadHist(); }).catch(()=>setSync('No se pudo borrar.')); return;
-    case 'drow-add': draft.push({name:'',total:''}); break;
-    case 'drow-del': draft.splice(+el.dataset.i,1); if(!draft.length) draft.push({name:'',total:''}); break;
-    case 'bulk':
-      draft.forEach(d=>{ if(d.name.trim()) addClient(d.name, num(d.total)); });
-      draft=[{name:'',total:''}]; break;
+    case 'madd': {
+      if(!manual.name.trim()) return;
+      const r = dedupe([manual], S.clients);
+      r.rows.forEach(d=>addClient(d.name, num(d.total)));
+      dupMsg = r.dups ? 'Ese cliente ya está en la lista con el mismo importe.' : '';
+      manual = {name:'',total:''}; break; }
+    case 'padd': {
+      const r = dedupe(photoRows.filter(d=>d.name.trim()), S.clients);
+      r.rows.forEach(d=>addClient(d.name, num(d.total)));
+      dupMsg = r.dups ? `Se omitieron ${r.dups} repetido${r.dups>1?'s':''} (mismo nombre e importe).` : '';
+      photoRows = []; pedi = null; break; }
+    case 'pr-edit': { const k=+el.dataset.i; pedi = pedi===k ? null : k; break; }
+    case 'pr-del': photoRows.splice(+el.dataset.i,1); pedi=null; break;
     case 'pedit': editId = editId===id ? null : id; break;
     case 'del': S.clients.splice(i,1); editId=null; break;
     case 'up': case 'down': {
@@ -450,7 +479,8 @@ document.addEventListener('input', e=>{
   if(e.target.id==='colorpick'){ applyColor(e.target.value); return; }
   const f = e.target.dataset.f; if(!f) return;
   if(f==='cname'){ const c=get(e.target.dataset.id); if(c){ c.name=e.target.value; save(); } return; }
-  if(f==='dname'||f==='dtot'){ draft[+e.target.dataset.i][f==='dname'?'name':'total']=e.target.value; return; }
+  if(f==='mname'||f==='mtot'){ manual[f==='mname'?'name':'total']=e.target.value; return; }
+  if(f==='prname'||f==='prtot'){ photoRows[+e.target.dataset.i][f==='prname'?'name':'total']=e.target.value; return; }
   const c = get(e.target.dataset.id); if(!c) return;
   if(f==='total'){ c.total = num(e.target.value);
     if(c.method && c.method!=='mix') c.pay={[c.method]:c.total}; save(); }
@@ -476,13 +506,14 @@ document.addEventListener('change', e=>{
 async function runOCR(){
   if(ocrBusy) return;
   try{
-    ocrBusy='Leyendo con IA…'; render();
+    dupMsg=''; ocrBusy='Leyendo con IA…'; render();
     const r = await fetch('/api/leer',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+TOKEN},body:JSON.stringify({image:S.photo})});
     if(r.status===401){ ocrBusy=''; S.photo=null; return logout(); }
     const d = await r.json();
     if(!r.ok) throw new Error(d.error||'error');
-    const rows = d.clients.map(c=>({name:c.name, total:c.total||''}));
-    if(rows.length) draft = rows;
+    const dd = dedupe(d.clients.map(c=>({name:c.name, total:c.total||''})));
+    dupMsg = dd.dups ? `Se quitaron ${dd.dups} repetido${dd.dups>1?'s':''} de la foto (mismo nombre e importe).` : '';
+    if(dd.rows.length){ photoRows = dd.rows; pedi = null; }
     else alert('No se encontraron clientes. Cargalos a mano.');
   }catch(err){ alert('No se pudo leer la foto ('+err.message+'). Cargá los clientes a mano mirando la foto.'); }
   ocrBusy=''; S.photo=null; render();
