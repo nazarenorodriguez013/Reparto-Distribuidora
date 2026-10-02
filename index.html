@@ -73,6 +73,7 @@ const KEY = 'reparto-v1';
 
 let S = load() || {photo:null, clients:[], tab:'planilla'};
 let ordering = null;      // modo "ordenar tocando": array de ids ya tocados
+let sel = null;           // cliente abierto en 'Siguientes'
 let mixOpen = null;       // id de cliente con panel mixto abierto
 let ocrText = '';
 let ocrBusy = '';
@@ -180,8 +181,11 @@ function vRecorrido(){
         <button class="btn sec" data-a="skip" data-id="${cur.id}">Saltar (al final)</button>
         ${mixOpen===cur.id?`<button class="btn" data-a="mixok" data-id="${cur.id}">Listo ✔</button>`:''}
       </div></div>`;
-    if(todo.length>1) h += `<div class="card"><h2>Siguientes</h2>${todo.slice(1).map(x=>
-      `<div class="item"><span class="n off">${c.indexOf(x)+1}</span><div class="nm"><b>${esc(x.name)}</b><span class="mut">${esc(x.addr)}</span></div><b>${money(x.total)}</b></div>`).join('')}</div>`;
+    if(todo.length>1) h += `<div class="card"><h2>Siguientes (tocá uno para cobrarle)</h2>${todo.slice(1).map(x=>{
+      if(sel!==x.id) return `<div class="item" data-a="sel" data-id="${x.id}"><span class="n off">${c.indexOf(x)+1}</span><div class="nm"><b>${esc(x.name)}</b><span class="mut">${esc(x.addr)}</span></div><b>${money(x.total)}</b></div>`;
+      return `<div class="card cur" style="margin:8px 0"><div class="big">${esc(x.name)}</div><div class="mut">${esc(x.addr)}</div>
+        <div class="big" style="color:var(--pri)">${money(x.total)}</div>${payButtons(x)}
+        <div class="row"><button class="btn sec" data-a="sel" data-id="${x.id}">Cerrar</button>${mixOpen===x.id?`<button class="btn" data-a="mixok" data-id="${x.id}">Listo ✔</button>`:''}</div></div>`;}).join('')}</div>`;
   } else {
     h += `<div class="card"><div class="big">Recorrido terminado 🎉</div><div class="row" style="margin-top:10px"><button class="btn" data-a="tosum">Ver resumen</button></div></div>`;
   }
@@ -274,8 +278,9 @@ document.addEventListener('click', e=>{
     case 'go': S.tab='recorrido'; break;
     case 'delfoto': S.photo=null; break;
     case 'ocr': return runOCR();
-    case 'pay': setPay(c, el.dataset.k); break;
-    case 'nopay': c.method=null; c.pay={}; c.done=true; mixOpen=null; break;
+    case 'sel': sel = sel===id ? null : id; mixOpen=null; break;
+    case 'pay': setPay(c, el.dataset.k); sel=null; break;
+    case 'nopay': sel=null; c.method=null; c.pay={}; c.done=true; mixOpen=null; break;
     case 'mixok': mixOpen=null; break;
     case 'skip': S.clients.splice(i,1); S.clients.push(c); break;
     case 'edit': mixOpen = mixOpen===id ? null : id; break;
