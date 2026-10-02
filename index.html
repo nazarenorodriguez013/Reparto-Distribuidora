@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="theme-color" content="#1d4ed8">
+<title>Reparto</title>
+<style>
+:root{--bg:#f3f4f6;--card:#fff;--tx:#111827;--mut:#6b7280;--pri:#1d4ed8;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--bd:#d1d5db}
+@media (prefers-color-scheme:dark){:root{--bg:#0f172a;--card:#1e293b;--tx:#f1f5f9;--mut:#94a3b8;--pri:#3b82f6;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--bd:#334155}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,sans-serif;padding-bottom:70px}
+header{background:var(--pri);color:#fff;padding:12px 16px;font-weight:700;font-size:18px;display:flex;justify-content:space-between;align-items:center}
+header button{background:rgba(255,255,255,.2);color:#fff;border:0;border-radius:8px;padding:6px 10px;font-size:13px}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--bd);z-index:5}
+nav button{flex:1;padding:14px 4px;border:0;background:none;color:var(--mut);font-size:15px;font-weight:600}
+nav button.on{color:var(--pri);border-top:3px solid var(--pri);padding-top:11px}
+main{padding:12px;max-width:640px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:10px}
+h2{font-size:16px;margin:4px 0 8px}
+input,textarea,select{width:100%;padding:10px;border:1px solid var(--bd);border-radius:8px;font:inherit;background:var(--bg);color:var(--tx)}
+textarea{min-height:110px}
+.row{display:flex;gap:8px;align-items:center}
+.row>*{flex:1}
+.row>.fit{flex:none}
+.btn{padding:11px 14px;border:0;border-radius:10px;background:var(--pri);color:#fff;font-weight:600;font-size:15px}
+.btn.sec{background:var(--bg);color:var(--tx);border:1px solid var(--bd)}
+.btn.sm{padding:6px 10px;font-size:13px}
+.btn.bad{background:var(--bad)}
+.mut{color:var(--mut);font-size:13px}
+.big{font-size:22px;font-weight:700}
+img.foto{width:100%;max-height:260px;object-fit:contain;border-radius:8px;background:#000;margin-top:8px}
+.item{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--bd)}
+.item:last-child{border:0}
+.item .n{width:28px;height:28px;border-radius:50%;background:var(--pri);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none}
+.item .n.off{background:var(--mut)}
+.item .nm{flex:1;min-width:0}
+.item .nm b{display:block;overflow:hidden;text-overflow:ellipsis}
+.pays{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+.pays button{padding:14px 6px;border-radius:10px;border:2px solid var(--bd);background:var(--bg);color:var(--tx);font-weight:600;font-size:15px}
+.pays button.on{border-color:var(--pri);background:var(--pri);color:#fff}
+.tag{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:600;background:var(--bg);border:1px solid var(--bd)}
+.tag.ok{color:var(--ok)}.tag.warn{color:var(--warn)}.tag.bad{color:var(--bad)}
+.tbl{width:100%;border-collapse:collapse}
+.tbl td{padding:8px 0;border-bottom:1px solid var(--bd)}
+.tbl td:last-child{text-align:right;font-weight:700}
+.mix{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
+.mix label{font-size:13px;color:var(--mut)}
+.cur{border:2px solid var(--pri)}
+.hint{background:#fef3c7;color:#78350f;padding:8px;border-radius:8px;font-size:14px;margin-bottom:8px}
+</style>
+</head>
+<body>
+<header><span>🚚 Reparto</span><button id="reset">Nueva planilla</button></header>
+<main id="app"></main>
+<nav>
+  <button data-t="planilla">Planilla</button>
+  <button data-t="recorrido">Recorrido</button>
+  <button data-t="resumen">Resumen</button>
+</nav>
+
+<script>
+const METHODS = [
+  ['ef','Efectivo'],['tr','Transferencia'],['ch','Cheque'],
+  ['ec','E-Cheq'],['cc','Cuenta corriente'],['mix','Pago mixto']
+];
+const LABEL = Object.fromEntries(METHODS);
+const KEYS = ['ef','tr','ch','ec','cc'];
+const KEY = 'reparto-v1';
+
+let S = load() || {photo:null, clients:[], tab:'planilla'};
+let ordering = null;      // modo "ordenar tocando": array de ids ya tocados
+let mixOpen = null;       // id de cliente con panel mixto abierto
+let ocrText = '';
+let ocrBusy = '';
+
+function load(){ try{ return JSON.parse(localStorage.getItem(KEY)); }catch(e){ return null; } }
+function save(){
+  try{ localStorage.setItem(KEY, JSON.stringify(S)); }
+  catch(e){ try{ const p=S.photo; S.photo=null; localStorage.setItem(KEY, JSON.stringify(S)); S.photo=p; }catch(_){} }
+}
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const money = n => '$ ' + (Math.round(n*100)/100).toLocaleString('es-AR',{minimumFractionDigits:0,maximumFractionDigits:2});
+const sum = c => KEYS.reduce((a,k)=>a+(c.pay[k]||0),0);
+const num = v => { v=String(v).trim().replace(/\./g,'').replace(',','.'); const n=parseFloat(v); return isNaN(n)?0:n; };
+const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const get = id => S.clients.find(c=>c.id===id);
+
+function addClient(name, total, addr){
+  S.clients.push({id:uid(), name:name.trim(), addr:(addr||'').trim(), total:total||0, pay:{}, done:false});
+}
+
+/* ---------- Render ---------- */
+function render(){
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on', b.dataset.t===S.tab));
+  $('#app').innerHTML = S.tab==='planilla' ? vPlanilla() : S.tab==='recorrido' ? vRecorrido() : vResumen();
+  save();
+}
+
+function vPlanilla(){
+  const c = S.clients;
+  return `
+  <div class="card">
+    <h2>1. Foto de la planilla</h2>
+    <input type="file" id="foto" accept="image/*" capture="environment">
+    ${S.photo?`<img class="foto" src="${S.photo}">
+    <div class="row" style="margin-top:8px">
+      <button class="btn sec" data-a="ocr">${ocrBusy?esc(ocrBusy):'Leer clientes con IA'}</button>
+      <button class="btn sec fit" data-a="delfoto">Quitar</button>
+    </div>
+    <div class="mut" style="margin-top:6px">La IA puede equivocarse: revisá la lista antes de cargar.</div>`:''}
+  </div>
+  <div class="card">
+    <h2>2. Clientes (uno por línea: <i>Nombre ; monto</i>)</h2>
+    <textarea id="bulk" placeholder="Kiosco Pérez ; 15.300&#10;Almacén Sol ; 8.200">${esc(ocrText)}</textarea>
+    <div class="row" style="margin-top:8px"><button class="btn" data-a="bulk">Cargar a la lista</button></div>
+    <h2 style="margin-top:14px">O agregar uno</h2>
+    <div class="row"><input id="n_name" placeholder="Cliente"><input id="n_tot" inputmode="decimal" placeholder="Monto" style="max-width:110px"></div>
+    <div class="row" style="margin-top:8px"><input id="n_addr" placeholder="Dirección (opcional)"><button class="btn fit" data-a="add">Agregar</button></div>
+  </div>
+  <div class="card">
+    <h2>3. Orden de recorrido (${c.length})</h2>
+    ${c.length>1?`<div class="row" style="margin-bottom:6px">
+      <button class="btn sec" data-a="${ordering?'ordend':'ordenar'}">${ordering?'Terminar orden':'Ordenar tocando uno por uno'}</button></div>`:''}
+    ${ordering?`<div class="hint">Tocá los clientes en el orden en que los vas a visitar. Van quedando numerados.</div>`:''}
+    ${c.length?c.map((x,i)=>{
+      const pos = ordering ? ordering.indexOf(x.id)+1 : i+1;
+      return `<div class="item" ${ordering?`data-a="pick" data-id="${x.id}"`:''}>
+        <span class="n ${ordering&&!pos?'off':''}">${ordering?(pos||'·'):pos}</span>
+        <div class="nm"><b>${esc(x.name)}</b><span class="mut">${esc(x.addr)}</span></div>
+        <input data-f="total" data-id="${x.id}" inputmode="decimal" value="${x.total||''}" placeholder="$" style="width:90px">
+        ${ordering?'':`<button class="btn sec sm" data-a="up" data-id="${x.id}">↑</button>
+        <button class="btn sec sm" data-a="down" data-id="${x.id}">↓</button>
+        <button class="btn sec sm" data-a="del" data-id="${x.id}">✕</button>`}
+      </div>`;}).join(''):'<div class="mut">Todavía no hay clientes.</div>'}
+    ${c.length&&!ordering?`<div class="row" style="margin-top:10px"><button class="btn" data-a="go">Empezar recorrido →</button></div>`:''}
+  </div>`;
+}
+
+function payButtons(c){
+  const m = c.method;
+  return `<div class="pays">${METHODS.map(([k,l])=>`<button class="${m===k?'on':''}" data-a="pay" data-k="${k}" data-id="${c.id}">${l}</button>`).join('')}
+    <button data-a="nopay" data-id="${c.id}" class="${c.done&&!sum(c)&&!c.method?'on':''}" style="grid-column:1/3">No pagó / no estaba</button></div>
+  ${mixOpen===c.id?mixPanel(c):''}`;
+}
+function mixPanel(c){
+  const rest = c.total - sum(c);
+  return `<div class="mix">${METHODS.filter(m=>m[0]!=='mix').map(([k,l])=>
+    `<div><label>${l}</label><input data-f="mix" data-k="${k}" data-id="${c.id}" inputmode="decimal" value="${c.pay[k]||''}" placeholder="0"></div>`).join('')}</div>
+    <div class="mut" id="mixrest-${c.id}">${restTxt(rest)}</div>`;
+}
+const restTxt = r => r===0?'Completo ✔': r>0?`Falta asignar ${money(r)}`:`Te pasaste ${money(-r)}`;
+
+function statusTag(c){
+  if(!c.done) return '<span class="tag">Sin visitar</span>';
+  const rest = c.total - sum(c), cc = c.pay.cc||0;
+  if(rest>0.005) return `<span class="tag bad">Pendiente ${money(rest)}</span>`;
+  if(cc>0) return `<span class="tag warn">Cta cte ${money(cc)}</span>`;
+  return '<span class="tag ok">Cobrado</span>';
+}
+
+function vRecorrido(){
+  const c = S.clients;
+  if(!c.length) return '<div class="card">Cargá clientes en la pestaña Planilla.</div>';
+  const todo = c.filter(x=>!x.done), done = c.filter(x=>x.done);
+  const cur = todo[0];
+  let h = `<div class="mut" style="margin-bottom:8px">Visitados ${done.length} de ${c.length}</div>`;
+  if(cur){
+    h += `<div class="card cur">
+      <div class="mut">Ahora · #${c.indexOf(cur)+1}</div>
+      <div class="big">${esc(cur.name)}</div>
+      <div class="mut">${esc(cur.addr)}</div>
+      <div class="big" style="color:var(--pri);margin-top:6px">${money(cur.total)}</div>
+      ${payButtons(cur)}
+      <div class="row">
+        <button class="btn sec" data-a="skip" data-id="${cur.id}">Saltar (al final)</button>
+        ${mixOpen===cur.id?`<button class="btn" data-a="mixok" data-id="${cur.id}">Listo ✔</button>`:''}
+      </div></div>`;
+    if(todo.length>1) h += `<div class="card"><h2>Siguientes</h2>${todo.slice(1).map(x=>
+      `<div class="item"><span class="n off">${c.indexOf(x)+1}</span><div class="nm"><b>${esc(x.name)}</b><span class="mut">${esc(x.addr)}</span></div><b>${money(x.total)}</b></div>`).join('')}</div>`;
+  } else {
+    h += `<div class="card"><div class="big">Recorrido terminado 🎉</div><div class="row" style="margin-top:10px"><button class="btn" data-a="tosum">Ver resumen</button></div></div>`;
+  }
+  if(done.length) h += `<div class="card"><h2>Hechos</h2>${done.map(x=>{
+    const open = mixOpen===x.id;
+    return `<div class="item" style="flex-wrap:wrap"><span class="n">${c.indexOf(x)+1}</span>
+      <div class="nm"><b>${esc(x.name)}</b>${statusTag(x)}</div>
+      <button class="btn sec sm" data-a="edit" data-id="${x.id}">Editar</button>
+      ${open?`<div style="width:100%">${payButtons(x)}<button class="btn" data-a="mixok" data-id="${x.id}">Listo ✔</button></div>`:''}
+    </div>`;}).join('')}</div>`;
+  return h;
+}
+
+function totals(){
+  const t = {ef:0,tr:0,ch:0,ec:0,cc:0,sin:0,total:0};
+  S.clients.forEach(c=>{
+    t.total += c.total;
+    KEYS.forEach(k=>t[k]+=c.pay[k]||0);
+    t.sin += Math.max(0, c.total - sum(c));
+  });
+  return t;
+}
+function vResumen(){
+  if(!S.clients.length) return '<div class="card">No hay datos todavía.</div>';
+  const t = totals();
+  const cobrado = t.ef+t.tr+t.ch+t.ec;
+  const pend = S.clients.filter(c=>c.total - sum(c) > 0.005 || (c.pay.cc||0)>0);
+  return `
+  <div class="card"><h2>Lo que tiene que haber</h2>
+    <table class="tbl">
+      <tr><td>💵 Efectivo</td><td>${money(t.ef)}</td></tr>
+      <tr><td>🏦 Transferencia</td><td>${money(t.tr)}</td></tr>
+      <tr><td>📄 Cheque</td><td>${money(t.ch)}</td></tr>
+      <tr><td>📱 E-Cheq</td><td>${money(t.ec)}</td></tr>
+      <tr><td><b>Total cobrado</b></td><td style="color:var(--ok)">${money(cobrado)}</td></tr>
+      <tr><td>📒 Cuenta corriente</td><td>${money(t.cc)}</td></tr>
+      <tr><td>⏳ Sin cobrar / sin marcar</td><td style="color:var(--bad)">${money(t.sin)}</td></tr>
+      <tr><td><b>Total planilla</b></td><td>${money(t.total)}</td></tr>
+    </table>
+    <div class="mut" style="margin-top:6px">Visitados ${S.clients.filter(c=>c.done).length} de ${S.clients.length}</div>
+  </div>
+  <div class="card"><h2>Clientes pendientes a cobrar (${pend.length})</h2>
+    ${pend.length?pend.map(c=>{
+      const rest = c.total - sum(c), cc = c.pay.cc||0;
+      return `<div class="item"><div class="nm"><b>${esc(c.name)}</b><span class="mut">${c.done?'':'Sin visitar · '}${cc>0?'Cta cte '+money(cc):''}${cc>0&&rest>0.005?' · ':''}${rest>0.005?'Sin cobrar '+money(rest):''}</span></div>
+      <b>${money(cc+Math.max(0,rest))}</b></div>`;}).join('')
+      :'<div class="mut">Nada pendiente ✔</div>'}
+    ${pend.length?`<div class="row" style="margin-top:8px"><b>Total pendiente</b><b style="text-align:right">${money(t.cc+t.sin)}</b></div>`:''}
+  </div>`;
+}
+
+/* ---------- Acciones ---------- */
+function setPay(c, k){
+  if(k==='mix'){ c.method='mix'; c.done=true; mixOpen=c.id; return; }
+  c.method=k; c.done=true; c.pay={[k]:c.total}; mixOpen=null;
+}
+
+document.addEventListener('click', e=>{
+  const nav = e.target.closest('nav button');
+  if(nav){ S.tab=nav.dataset.t; mixOpen=null; return render(); }
+  if(e.target.id==='reset'){
+    if(confirm('¿Borrar la planilla actual y empezar una nueva?')){ S={photo:null,clients:[],tab:'planilla'}; ocrText=''; ordering=null; mixOpen=null; render(); }
+    return;
+  }
+  const el = e.target.closest('[data-a]'); if(!el) return;
+  const a = el.dataset.a, id = el.dataset.id, c = id&&get(id);
+  const i = c ? S.clients.indexOf(c) : -1;
+  switch(a){
+    case 'add': {
+      const n=$('#n_name').value; if(!n.trim()) return;
+      addClient(n, num($('#n_tot').value), $('#n_addr').value); break; }
+    case 'bulk': {
+      const lines = $('#bulk').value.split('\n').map(l=>l.trim()).filter(Boolean);
+      lines.forEach(l=>{
+        let name=l, tot=0;
+        const m = l.match(/^(.*?)[;|\t]\s*\$?\s*([\d.,]+)\s*$/) || l.match(/^(.*?\D)\s+\$?\s*(\d[\d.,]*)\s*$/);
+        if(m){ name=m[1].replace(/[\s\-–:]+$/,''); tot=num(m[2]); }
+        if(name) addClient(name, tot);
+      });
+      ocrText=''; break; }
+    case 'del': S.clients.splice(i,1); break;
+    case 'up': if(i>0) [S.clients[i-1],S.clients[i]]=[S.clients[i],S.clients[i-1]]; break;
+    case 'down': if(i<S.clients.length-1) [S.clients[i+1],S.clients[i]]=[S.clients[i],S.clients[i+1]]; break;
+    case 'ordenar': ordering=[]; break;
+    case 'pick':
+      if(!ordering.includes(id)) ordering.push(id);
+      if(ordering.length===S.clients.length) a_finishOrder();
+      break;
+    case 'ordend': a_finishOrder(); break;
+    case 'go': S.tab='recorrido'; break;
+    case 'delfoto': S.photo=null; break;
+    case 'ocr': return runOCR();
+    case 'pay': setPay(c, el.dataset.k); break;
+    case 'nopay': c.method=null; c.pay={}; c.done=true; mixOpen=null; break;
+    case 'mixok': mixOpen=null; break;
+    case 'skip': S.clients.splice(i,1); S.clients.push(c); break;
+    case 'edit': mixOpen = mixOpen===id ? null : id; break;
+    case 'tosum': S.tab='resumen'; break;
+  }
+  render();
+});
+
+function a_finishOrder(){
+  const rest = S.clients.filter(c=>!ordering.includes(c.id));
+  S.clients = ordering.map(get).concat(rest);
+  ordering = null;
+}
+
+document.addEventListener('input', e=>{
+  const f = e.target.dataset.f; if(!f) return;
+  const c = get(e.target.dataset.id); if(!c) return;
+  if(f==='total'){ c.total = num(e.target.value);
+    if(c.method && c.method!=='mix') c.pay={[c.method]:c.total}; save(); }
+  if(f==='mix'){ c.pay[e.target.dataset.k] = num(e.target.value);
+    const r=$('#mixrest-'+c.id); if(r) r.textContent = restTxt(c.total-sum(c)); save(); }
+});
+
+/* ---------- Foto + OCR ---------- */
+document.addEventListener('change', e=>{
+  if(e.target.id!=='foto' || !e.target.files[0]) return;
+  const img = new Image(), url = URL.createObjectURL(e.target.files[0]);
+  img.onload = ()=>{
+    const sc = Math.min(1, 1600/Math.max(img.width,img.height));
+    const cv = document.createElement('canvas');
+    cv.width=img.width*sc; cv.height=img.height*sc;
+    cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);
+    S.photo = cv.toDataURL('image/jpeg',.8);
+    URL.revokeObjectURL(url); render();
+  };
+  img.src = url;
+});
+
+async function runOCR(){
+  if(ocrBusy) return;
+  try{
+    ocrBusy='Leyendo con IA…'; render();
+    const r = await fetch('/api/leer',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({image:S.photo})});
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.error||'error');
+    ocrText = d.clients.map(c=>c.name+' ; '+(c.total||0)).join('\n');
+    if(!ocrText) alert('No se encontraron clientes. Cargalos a mano.');
+  }catch(err){ alert('No se pudo leer la foto ('+err.message+'). Cargá los clientes a mano mirando la foto.'); }
+  ocrBusy=''; render();
+}
+
+render();
+</script>
+</body>
+</html>
