@@ -202,7 +202,7 @@ function vPlanilla(){
       <input data-f="dname" data-i="${i}" value="${esc(d.name)}" placeholder="Cliente">
       <input data-f="dtot" data-i="${i}" inputmode="decimal" value="${d.total||''}" placeholder="$" style="flex:none;width:130px;text-align:right">
       <button class="btn sec sm fit" data-a="drow-del" data-i="${i}">✕</button></div>`).join('')}
-    <div class="row"><button class="btn sec" data-a="drow-add">+ Cliente</button><button class="btn" data-a="bulk">Cargar a la lista</button></div>
+    <div class="row"><button class="btn" data-a="bulk">Cargar a la lista</button></div>
   </div>
   <div class="card">
     <h2>2. Orden de recorrido (${c.length})</h2>
