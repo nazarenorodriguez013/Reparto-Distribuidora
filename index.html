@@ -197,12 +197,13 @@ function vPlanilla(){
   <div class="card">
     <h2>1. Clientes y montos</h2>
     ${ocrBusy?`<div class="hint">${esc(ocrBusy)}</div>`:''}
-    <div class="row mut" style="margin-bottom:4px"><span>Cliente</span><span style="flex:none;width:130px;text-align:right">Monto</span><span class="fit" style="width:48px"></span></div>
-    ${draft.map((d,i)=>`<div class="row" style="margin-bottom:8px">
+    ${draft.map((d,i)=>`<div style="margin-bottom:12px">
       <input data-f="dname" data-i="${i}" value="${esc(d.name)}" placeholder="Cliente">
-      <input data-f="dtot" data-i="${i}" inputmode="decimal" value="${d.total||''}" placeholder="$" style="flex:none;width:130px;text-align:right">
-      <button class="btn sec sm fit" data-a="drow-del" data-i="${i}">✕</button></div>`).join('')}
-    <div class="row"><button class="btn" data-a="bulk">Cargar a la lista</button></div>
+      <div class="row" style="margin-top:8px">
+        <input data-f="dtot" data-i="${i}" inputmode="decimal" value="${d.total||''}" placeholder="Monto $" style="text-align:right">
+        ${draft.length>1?`<button class="btn sec sm fit" data-a="drow-del" data-i="${i}">✕</button>`:''}
+        ${i===draft.length-1?'<button class="btn" data-a="bulk">Cargar a la lista</button>':''}
+      </div></div>`).join('')}
   </div>
   <div class="card">
     <h2>2. Orden de recorrido (${c.length})</h2>
