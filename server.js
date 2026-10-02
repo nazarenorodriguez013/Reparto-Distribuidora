@@ -34,6 +34,15 @@ const dbReady = pool ? pool.query(`CREATE TABLE IF NOT EXISTS planillas (
 const TYPES = { '.html': 'text/html; charset=utf-8', '.json': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.js': 'text/javascript; charset=utf-8' };
 const FILES = ['index.html', 'manifest.json', 'icon.svg', 'sw.js', 'icon-192.png', 'icon-512.png', 'icon-maskable.png', 'apple-touch-icon.png'];
 
+// Límite de lectura de fotos: 3 cada 10 minutos (ventana deslizante, común a toda la app).
+const FOTOS_MAX = 3, FOTOS_VENTANA = 10 * 60 * 1000;
+let fotos = [];
+function fotosEstado() {
+  const ahora = Date.now();
+  fotos = fotos.filter(t => ahora - t < FOTOS_VENTANA);
+  return { restantes: Math.max(0, FOTOS_MAX - fotos.length), espera: fotos.length ? Math.ceil((fotos[0] + FOTOS_VENTANA - ahora) / 60000) : 0 };
+}
+
 const send = (res, code, obj) => { res.statusCode = code; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(obj)); };
 function body(req, limit = 15e6) {
   return new Promise(ok => {
@@ -94,9 +103,14 @@ http.createServer(async (req, res) => {
       if (!validToken(req.headers.authorization)) return send(res, 401, { error: 'No autorizado' });
       if (url === '/api/leer') {
         req.body = await body(req);
+        const est = fotosEstado();
+        if (!est.restantes) return send(res, 429, { error: `Límite alcanzado: solo se pueden leer ${FOTOS_MAX} fotos cada 10 minutos. Probá de nuevo en ${est.espera} min.`, restantes: 0 });
+        fotos.push(Date.now());
         res.status = c => { res.statusCode = c; return res; };
-        res.json = o => send(res, res.statusCode || 200, o);
-        return await leer(req, res);
+        res.json = o => send(res, res.statusCode || 200, res.statusCode >= 400 ? o : { ...o, restantes: fotosEstado().restantes });
+        await leer(req, res);
+        if (res.statusCode >= 400) fotos.pop();   // si falló, no gasta el cupo
+        return;
       }
       return await planillas(req, res, url);
     }
