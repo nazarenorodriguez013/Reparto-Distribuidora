@@ -17,7 +17,10 @@ function validToken(h) {
   return !!sig && Number(exp) > Date.now() && same(sig, sign(exp));
 }
 
-const DB_URL = process.env.DATABASE_URL;
+const E = process.env;
+const DB_URL = E.DATABASE_URL || E.DATABASE_PRIVATE_URL || E.DATABASE_PUBLIC_URL ||
+  (E.PGHOST && E.PGUSER && E.PGPASSWORD ? `postgres://${encodeURIComponent(E.PGUSER)}:${encodeURIComponent(E.PGPASSWORD)}@${E.PGHOST}:${E.PGPORT || 5432}/${E.PGDATABASE || 'railway'}` : null);
+console.log(DB_URL ? 'Base de datos: configurada' : 'Base de datos: NO configurada (falta DATABASE_URL en este servicio)');
 const pool = DB_URL ? new Pool({
   connectionString: DB_URL,
   ssl: /railway\.internal|localhost|127\.0\.0\.1/.test(DB_URL) ? false : { rejectUnauthorized: false },
