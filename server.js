@@ -88,7 +88,7 @@ http.createServer(async (req, res) => {
     if (url === '/api/login' && req.method === 'POST') {
       const b = await body(req, 1e4);
       const ok = typeof b.user === 'string' && typeof b.pass === 'string' && same(b.user, USER) && same(b.pass, PASS);
-      return send(res, ok ? 200 : 401, ok ? { token: makeToken() } : { error: 'Usuario o contraseña incorrectos' });
+      return send(res, ok ? 200 : 401, ok ? { token: makeToken(), user: USER } : { error: 'Usuario o contraseña incorrectos' });
     }
     if (url.startsWith('/api/')) {
       if (!validToken(req.headers.authorization)) return send(res, 401, { error: 'No autorizado' });

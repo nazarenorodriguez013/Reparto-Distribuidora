@@ -71,7 +71,7 @@ body.login{background:linear-gradient(160deg,var(--pri),#0f172a);min-height:100v
 </style>
 </head>
 <body>
-<header><span>🚚 Reparto Nestle</span><span><button id="histbtn">Historial</button> <button id="cfgbtn">Configuración</button> <button id="reset">Nueva planilla</button> <button id="logout">Salir</button></span></header>
+<header><span>🚚 Reparto Nestle<small id="whoami" style="display:block;font-size:13px;font-weight:500;opacity:.85"></small></span><span><button id="histbtn">Historial</button> <button id="cfgbtn">Configuración</button> <button id="reset">Nueva planilla</button> <button id="logout">Salir</button></span></header>
 <div id="syncmsg" class="hint" style="display:none;margin:8px 12px"></div>
 <main id="app"></main>
 <input type="file" id="foto" accept="image/*" capture="environment" hidden>
@@ -96,6 +96,8 @@ let ordering = null;      // modo "ordenar tocando": array de ids ya tocados
 let TOKEN = null;
 try{ TOKEN = localStorage.getItem('reparto-token'); }catch(e){}
 let loginErr = '', loginUser = '';
+let USERNAME = '';
+try{ USERNAME = localStorage.getItem('reparto-user') || ''; }catch(e){}
 let editId = null;        // cliente abierto para editar en Planilla
 let sel = null;           // cliente abierto en 'Siguientes'
 let mixOpen = null;       // id de cliente con panel mixto abierto
@@ -201,6 +203,7 @@ function render(){
   const logged = !!TOKEN;
   document.querySelector('nav').style.display = $('#navfoto').style.display = document.querySelector('header').style.display = logged ? '' : 'none';
   document.body.classList.toggle('login', !logged);
+  $('#whoami').textContent = USERNAME ? 'Usuario: ' + USERNAME.charAt(0).toUpperCase() + USERNAME.slice(1) : '';
   if(!logged){ $('#app').innerHTML = vLogin(); return; }
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on', b.dataset.t===S.tab));
   $('#app').innerHTML = S.tab==='planilla' ? vPlanilla() : S.tab==='recorrido' ? vRecorrido() : S.tab==='historial' ? vHistorial() : S.tab==='config' ? vConfig() : vResumen();
@@ -227,7 +230,9 @@ async function doLogin(){
     const r = await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user:$('#l_user').value.trim(),pass:$('#l_pass').value})});
     const d = await r.json();
     if(!r.ok) throw new Error(d.error||'error');
-    TOKEN = d.token; loginErr=''; loadRemote();
+    TOKEN = d.token; loginErr=''; USERNAME = d.user || loginUser;
+    try{ localStorage.setItem('reparto-user', USERNAME); }catch(e){}
+    loadRemote();
     try{ localStorage.setItem('reparto-token', TOKEN); }catch(e){}
   }catch(err){ loginErr = err.message==='Failed to fetch' ? 'Sin conexión' : err.message; }
   render();
