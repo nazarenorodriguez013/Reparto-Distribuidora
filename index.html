@@ -250,27 +250,16 @@ function vRecorrido(){
   const c = S.clients;
   if(!c.length) return '<div class="card">Cargá clientes en la pestaña Planilla.</div>';
   const todo = c.filter(x=>!x.done), done = c.filter(x=>x.done);
-  const cur = todo[0];
   if(ordering) return `<div class="card"><h2>Ordenar recorrido</h2>
     <div class="hint">Tocá los clientes en el orden en que los vas a visitar. Van quedando numerados.</div>
     ${todo.map(x=>{ const pos=ordering.indexOf(x.id)+1; return `<div class="item" data-a="pick" data-id="${x.id}">
       <span class="n ${pos?'':'off'}">${pos||'·'}</span><div class="nm"><b>${esc(x.name)}</b><span class="mut">${esc(x.addr)}</span></div><b>${money(x.total)}</b></div>`; }).join('')}
     <div class="row" style="margin-top:12px"><button class="btn sec" data-a="ordreset">Borrar selección</button><button class="btn" data-a="ordend">Listo ✔</button></div></div>`;
   let h = `<div class="mut" style="margin-bottom:8px">Visitados ${done.length} de ${c.length}</div>`;
-  if(cur){
-    h += `<div class="card cur">
-      <div class="mut">Ahora · #${c.indexOf(cur)+1}</div>
-      <div class="big">${esc(cur.name)}</div>
-      <div class="mut">${esc(cur.addr)}</div>
-      <div class="big" style="color:var(--pri);margin-top:6px">${money(cur.total)}</div>
-      ${payButtons(cur)}
-      <div class="row">
-        <button class="btn sec" data-a="skip" data-id="${cur.id}">Saltar (al final)</button>
-        ${mixOpen===cur.id?`<button class="btn" data-a="mixok" data-id="${cur.id}">Listo ✔</button>`:''}
-      </div></div>`;
-    if(todo.length>1) h += `<div class="card"><h2>Siguientes</h2>
-      <div class="mut" style="margin-bottom:6px">Tocá uno para cobrarle. Mantené apretado para ordenar.</div>
-      <button class="btn sec" style="width:100%;margin-bottom:6px" data-a="ordenar">Ordenar recorrido</button>${todo.slice(1).map((x,k)=>{
+  if(todo.length){
+    if(todo.length) h += `<div class="card"><h2>Pendientes (${todo.length})</h2>
+      <div class="mut" style="margin-bottom:6px">Tocá un cliente para cobrarle. Mantené apretado para ordenar.</div>
+      <button class="btn sec" style="width:100%;margin-bottom:6px" data-a="ordenar">Ordenar recorrido</button>${todo.map(x=>{
       if(sel!==x.id) return `<div class="item" data-a="sel" data-id="${x.id}" data-lp="1"><span class="n off">${c.indexOf(x)+1}</span><div class="nm"><b>${esc(x.name)}</b></div><b>${money(x.total)}</b>
         <button class="btn sec sm" data-a="up" data-id="${x.id}">↑</button><button class="btn sec sm" data-a="down" data-id="${x.id}">↓</button></div>`;
       return `<div class="card cur" style="margin:8px 0"><div class="big">${esc(x.name)}</div><div class="mut">${esc(x.addr)}</div>
