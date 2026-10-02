@@ -5,8 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <meta name="theme-color" content="#1d4ed8">
 <link rel="manifest" href="manifest.json">
-<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Reparto">
 <title>Reparto Nestle</title>
 <style>
 :root{--bg:#f3f4f6;--card:#fff;--tx:#111827;--mut:#6b7280;--pri:#1d4ed8;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--bd:#d1d5db}
@@ -81,6 +84,13 @@ header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
 <div id="syncmsg" class="hint" style="display:none;margin:8px 12px"></div>
 <main id="app"></main>
 <input type="file" id="foto" accept="image/*" capture="environment" hidden>
+<input type="file" id="fotog" accept="image/*" hidden>
+<div id="fotosheet" style="display:none;position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.5);align-items:flex-end">
+  <div style="width:100%;background:var(--card);border-radius:20px 20px 0 0;padding:16px;display:flex;flex-direction:column;gap:10px">
+    <button class="btn" data-a="foto-cam">Sacar foto</button>
+    <button class="btn" data-a="foto-gal">Elegir de la galería</button>
+    <button class="btn sec" data-a="foto-x">Cancelar</button>
+  </div></div>
 <button id="navfoto">Cargar por foto</button>
 <nav>
   <button data-t="planilla">Planilla</button>
@@ -398,7 +408,12 @@ document.addEventListener('click', e=>{
   if(e.target.id==='menubtn'){ $('#menu').classList.toggle('open'); return; }
   if(!e.target.closest('#menu')) $('#menu').classList.remove('open'); else if(e.target.id!=='reset') $('#menu').classList.remove('open');
   if(e.target.id==='logout') return logout();
-  if(e.target.closest('#navfoto')){ $('#foto').click(); return; }
+  if(e.target.closest('#navfoto')){ $('#fotosheet').style.display='flex'; return; }
+  if(e.target.closest('#fotosheet')){
+    const a = e.target.dataset.a; $('#fotosheet').style.display='none';
+    if(a==='foto-cam') $('#foto').click(); else if(a==='foto-gal') $('#fotog').click();
+    return;
+  }
   const nav = e.target.closest('nav button[data-t]');
   if(nav){ S.tab=nav.dataset.t; mixOpen=null; ordering=null; editId=null; return render(); }
   if(e.target.id==='cfgbtn'){ S.tab='config'; mixOpen=null; sel=null; render(); return; }
@@ -490,7 +505,7 @@ document.addEventListener('input', e=>{
 
 /* ---------- Foto + OCR ---------- */
 document.addEventListener('change', e=>{
-  if(e.target.id!=='foto' || !e.target.files[0]) return;
+  if((e.target.id!=='foto' && e.target.id!=='fotog') || !e.target.files[0]) return;
   const img = new Image(), url = URL.createObjectURL(e.target.files[0]);
   img.onload = ()=>{
     const sc = Math.min(1, 1600/Math.max(img.width,img.height));
@@ -519,6 +534,7 @@ async function runOCR(){
   ocrBusy=''; S.photo=null; render();
 }
 
+if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
 render();
 loadRemote();
 </script>
