@@ -22,7 +22,7 @@ module.exports = async (req, res) => {
           { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } },
           { type: 'text', text: 'Esta es una planilla de reparto. Extraé cada cliente en el orden en que aparece. ' +
             'Respondé SOLO con un JSON array, sin texto extra: [{"name":"cliente","addr":"dirección o vacío","importe":"importe a cobrar tal cual está impreso"}]. ' +
-            'En importe copiá solo los dígitos y separadores exactamente como se ven, sin interpretarlos ni convertirlos. Si no se lee, usá "0".' },
+            'En importe copiá los dígitos y los separadores exactamente como se ven, sin interpretarlos ni convertirlos: fijate bien dónde está la coma o el punto de los decimales. La planilla trabaja con dos decimales (normalmente los últimos dos dígitos), a veces sin separador visible. Si no se lee, usá "0".' },
         ],
       }],
     }),
@@ -32,12 +32,21 @@ module.exports = async (req, res) => {
   const text = (data.content || []).map(b => b.text || '').join('');
   try {
     const raw = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1));
-    // Los importes de la planilla siempre tienen los últimos dos dígitos como decimales.
-    const clients = raw.map(c => ({
-      name: String(c.name || '').trim(),
-      addr: String(c.addr || '').trim(),
-      total: (parseInt(String(c.importe ?? c.total ?? '').replace(/\D/g, ''), 10) || 0) / 100,
-    }));
+    // Los importes de la planilla trabajan con dos decimales. Se busca dónde está la coma o el punto
+    // decimal; si no se ve ninguno, los últimos dos dígitos son los decimales. Los casos dudosos se marcan.
+    const clients = raw.map(c => {
+      const txt = String(c.importe ?? c.total ?? '').trim();
+      const digits = txt.replace(/\D/g, '');
+      const m = /[.,](\d{1,2})$/.exec(txt);
+      const dec = m ? m[1].length : 2;
+      const dudoso = /[.,]\d{3}$/.test(txt) || (m && m[1].length === 1) || digits.length < 3;
+      return {
+        name: String(c.name || '').trim(),
+        addr: String(c.addr || '').trim(),
+        total: (parseInt(digits, 10) || 0) / Math.pow(10, dec),
+        revisar: !!dudoso && digits !== '0',
+      };
+    });
     res.json({ clients });
   } catch (e) {
     res.status(502).json({ error: 'No se pudo interpretar la respuesta' });

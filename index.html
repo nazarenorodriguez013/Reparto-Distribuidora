@@ -287,13 +287,14 @@ function vPlanilla(){
   </div>
   ${photoRows.length?`<div class="card">
     <h2>Leídos de la foto (${photoRows.length})</h2>
+    ${photoRows.some(d=>d.warn)?'<div class="hint">⚠ Revisá los importes marcados: no quedó claro dónde van los decimales.</div>':''}
     ${photoRows.map((d,i)=>pedi===i?
       `<div class="card cur" style="margin:8px 0">
         <input data-f="prname" data-i="${i}" value="${esc(d.name)}" placeholder="Cliente">
         <input data-f="praddr" data-i="${i}" value="${esc(d.addr||'')}" placeholder="Dirección" style="margin-top:8px">
         <input data-f="prtot" data-i="${i}" inputmode="decimal" value="${d.total||''}" placeholder="Monto $" style="margin-top:8px;text-align:right">
         <div class="row" style="margin-top:10px"><button class="btn bad" data-a="pr-del" data-i="${i}">Quitar</button><button class="btn" data-a="pr-edit" data-i="${i}">Listo ✔</button></div></div>`
-      :`<div class="item" data-a="pr-edit" data-i="${i}"><div class="nm"><b>${esc(d.name)||'(sin nombre)'}</b></div><b>${money(num(d.total))}</b></div>`).join('')}
+      :`<div class="item" data-a="pr-edit" data-i="${i}"><div class="nm"><b>${esc(d.name)||'(sin nombre)'}</b></div><b>${d.warn?'⚠ ':''}${money(num(d.total))}</b></div>`).join('')}
     <div class="row" style="margin-top:12px"><button class="btn" data-a="padd">Agregar a la lista</button></div>
   </div>`:''}
   <div class="card">
@@ -446,7 +447,7 @@ document.addEventListener('click', e=>{
       r.rows.forEach(d=>addClient(d.name, num(d.total), d.addr));
       dupMsg = r.dups ? `Se omitieron ${r.dups} repetido${r.dups>1?'s':''} (mismo nombre e importe).` : '';
       photoRows = []; pedi = null; break; }
-    case 'pr-edit': { const k=+el.dataset.i; pedi = pedi===k ? null : k; break; }
+    case 'pr-edit': { const k=+el.dataset.i; if(pedi===k) photoRows[k].warn=false; pedi = pedi===k ? null : k; break; }
     case 'pr-del': photoRows.splice(+el.dataset.i,1); pedi=null; break;
     case 'pedit': editId = editId===id ? null : id; break;
     case 'del': S.clients.splice(i,1); editId=null; break;
@@ -529,7 +530,7 @@ async function runOCR(){
     if(r.status===401){ ocrBusy=''; S.photo=null; return logout(); }
     const d = await r.json();
     if(!r.ok) throw new Error(d.error||'error');
-    const dd = dedupe(d.clients.map(c=>({name:c.name, addr:c.addr||'', total:fmtInput(c.total)})));
+    const dd = dedupe(d.clients.map(c=>({name:c.name, addr:c.addr||'', total:fmtInput(c.total), warn:!!c.revisar})));
     dupMsg = dd.dups ? `Se quitaron ${dd.dups} repetido${dd.dups>1?'s':''} de la foto (mismo nombre e importe).` : '';
     if(dd.rows.length){ photoRows = dd.rows; pedi = null; }
     else alert('No se encontraron clientes. Cargalos a mano.');
