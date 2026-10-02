@@ -76,6 +76,9 @@ header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
 #menu.open{display:block}
 #menu button{display:block;width:100%;text-align:left;padding:15px 18px;border:0;border-bottom:1px solid var(--bd);background:none;color:var(--tx);font-size:16px;font-weight:600}
 #menu button:last-child{border:0;color:var(--bad)}
+.item.done{background:rgba(22,163,74,.13);border-radius:10px;padding-left:8px;padding-right:8px;margin:2px 0;border-bottom:0}
+.item .n.ok{background:var(--ok);color:#fff}
+.item .pen{font-size:20px;color:var(--pri);padding:0 6px}
 </style>
 </head>
 <body>
@@ -127,7 +130,7 @@ function dedupe(rows, existing=[]){
   rows.forEach(r=>{ const k=sameKey(r.name,r.total); if(seen.has(k)) dups++; else { seen.add(k); out.push(r); } });
   return {rows:out, dups};
 }
-let manual = {name:'',total:''};   // formulario de carga manual
+let manual = {name:'',addr:'',total:''};   // formulario de carga manual
 let photoRows = [];               // clientes leídos de la foto, por revisar
 let pedi = null;                  // fila de la foto abierta para editar
 let ocrBusy = '';
@@ -275,6 +278,7 @@ function vPlanilla(){
     ${ocrBusy?`<div class="hint">${esc(ocrBusy)}</div>`:''}
     ${dupMsg?`<div class="hint">${esc(dupMsg)}</div>`:''}
     <input data-f="mname" value="${esc(manual.name)}" placeholder="Cliente">
+    <input data-f="maddr" value="${esc(manual.addr)}" placeholder="Dirección (opcional)" style="margin-top:8px">
     <div class="row" style="margin-top:8px">
       <input data-f="mtot" inputmode="decimal" value="${manual.total||''}" placeholder="Monto $" style="text-align:right">
       <button class="btn" data-a="madd">Agregar a la lista</button>
@@ -285,6 +289,7 @@ function vPlanilla(){
     ${photoRows.map((d,i)=>pedi===i?
       `<div class="card cur" style="margin:8px 0">
         <input data-f="prname" data-i="${i}" value="${esc(d.name)}" placeholder="Cliente">
+        <input data-f="praddr" data-i="${i}" value="${esc(d.addr||'')}" placeholder="Dirección" style="margin-top:8px">
         <input data-f="prtot" data-i="${i}" inputmode="decimal" value="${d.total||''}" placeholder="Monto $" style="margin-top:8px;text-align:right">
         <div class="row" style="margin-top:10px"><button class="btn bad" data-a="pr-del" data-i="${i}">Quitar</button><button class="btn" data-a="pr-edit" data-i="${i}">Listo ✔</button></div></div>`
       :`<div class="item" data-a="pr-edit" data-i="${i}"><div class="nm"><b>${esc(d.name)||'(sin nombre)'}</b></div><b>${money(num(d.total))}</b></div>`).join('')}
@@ -296,6 +301,7 @@ function vPlanilla(){
       `<div class="card cur" style="margin:8px 0">
         <h2>Editar cliente</h2>
         <input data-f="cname" data-id="${x.id}" value="${esc(x.name)}" placeholder="Cliente">
+        <input data-f="caddr" data-id="${x.id}" value="${esc(x.addr||'')}" placeholder="Dirección" style="margin-top:8px">
         <input data-f="total" data-id="${x.id}" inputmode="decimal" value="${x.total||''}" placeholder="Monto $" style="margin-top:8px;text-align:right">
         <div class="row" style="margin-top:10px"><button class="btn bad" data-a="del" data-id="${x.id}">Borrar</button><button class="btn" data-a="pedit" data-id="${x.id}">Listo ✔</button></div></div>`
       :`<div class="item" data-a="pedit" data-id="${x.id}">
@@ -324,7 +330,8 @@ function statusTag(c){
   const rest = c.total - sum(c), cc = c.pay.cc||0;
   if(rest>0.005) return `<span class="tag bad">Pendiente ${money(rest)}</span>`;
   if(cc>0) return `<span class="tag warn">Cta cte ${money(cc)}</span>`;
-  return '<span class="tag ok">Cobrado</span>';
+  const med = c.method && c.method!=='mix' ? LABEL[c.method] : 'Mixto';
+  return `<span class="tag ok">Cobrado · ${med}</span>`;
 }
 
 function vRecorrido(){
@@ -336,26 +343,19 @@ function vRecorrido(){
     ${todo.map(x=>{ const pos=ordering.indexOf(x.id)+1; return `<div class="item" data-a="pick" data-id="${x.id}">
       <span class="n ${pos?'':'off'}">${pos||'·'}</span><div class="nm"><b>${esc(x.name)}</b><span class="mut">${esc(x.addr)}</span></div><b>${money(x.total)}</b></div>`; }).join('')}
     <div class="row" style="margin-top:12px"><button class="btn sec" data-a="ordreset">Borrar selección</button><button class="btn" data-a="ordend">Listo ✔</button></div></div>`;
-  let h = `<div class="mut" style="margin-bottom:8px">Visitados ${done.length} de ${c.length}</div>`;
-  if(todo.length){
-    if(todo.length) h += `<div class="card"><h2>Pendientes (${todo.length})</h2>
-      <div class="mut" style="margin-bottom:6px">Tocá un cliente para cobrarle. Mantené apretado para ordenar.</div>
-      <button class="btn sec" style="width:100%;margin-bottom:6px" data-a="ordenar">Ordenar recorrido</button>${todo.map(x=>{
-      if(sel!==x.id) return `<div class="item" data-a="sel" data-id="${x.id}" data-lp="1"><span class="n off">${c.indexOf(x)+1}</span><div class="nm"><b>${esc(x.name)}</b></div><b>${money(x.total)}</b>
-        <button class="btn sec sm" data-a="up" data-id="${x.id}">↑</button><button class="btn sec sm" data-a="down" data-id="${x.id}">↓</button></div>`;
-      return `<div class="card cur" style="margin:8px 0"><div class="big">${esc(x.name)}</div><div class="mut">${esc(x.addr)}</div>
+  let h = '';
+  if(!todo.length) h += `<div class="card"><div class="big">Recorrido terminado 🎉</div><div class="row" style="margin-top:10px"><button class="btn" data-a="tosum">Ver resumen</button></div></div>`;
+  h += `<div class="card"><h2>Recorrido (${done.length} de ${c.length})</h2>
+    <div class="mut" style="margin-bottom:6px">Tocá un cliente para cobrarle o cambiar el pago. Mantené apretado un pendiente para ordenar.</div>
+    ${todo.length>1?'<button class="btn sec" style="width:100%;margin-bottom:6px" data-a="ordenar">Ordenar recorrido</button>':''}
+    ${c.map((x,k)=>{
+      if(sel===x.id) return `<div class="card cur" style="margin:8px 0"><div class="big">${esc(x.name)}</div><div class="mut">${esc(x.addr)}</div>
         <div class="big" style="color:var(--pri)">${money(x.total)}</div>${payButtons(x)}
-        <div class="row"><button class="btn sec" data-a="sel" data-id="${x.id}">Cerrar</button>${mixOpen===x.id?`<button class="btn" data-a="mixok" data-id="${x.id}">Listo ✔</button>`:''}</div></div>`;}).join('')}</div>`;
-  } else {
-    h += `<div class="card"><div class="big">Recorrido terminado 🎉</div><div class="row" style="margin-top:10px"><button class="btn" data-a="tosum">Ver resumen</button></div></div>`;
-  }
-  if(done.length) h += `<div class="card"><h2>Hechos</h2>${done.map(x=>{
-    const open = mixOpen===x.id;
-    return `<div class="item" style="flex-wrap:wrap"><span class="n">${c.indexOf(x)+1}</span>
-      <div class="nm"><b>${esc(x.name)}</b></div>${statusTag(x)}
-      <button class="btn sec sm" style="padding:0 10px" data-a="edit" data-id="${x.id}">Editar</button>
-      ${open?`<div style="width:100%">${payButtons(x)}<button class="btn" data-a="mixok" data-id="${x.id}">Listo ✔</button></div>`:''}
-    </div>`;}).join('')}</div>`;
+        <div class="row"><button class="btn sec" data-a="sel" data-id="${x.id}">Cerrar</button>${mixOpen===x.id?`<button class="btn" data-a="mixok" data-id="${x.id}">Listo ✔</button>`:''}</div></div>`;
+      if(x.done) return `<div class="item done" data-a="sel" data-id="${x.id}"><span class="n ok">✓</span><div class="nm"><b>${esc(x.name)}</b>${statusTag(x)}</div><b>${money(x.total)}</b><button class="btn sec sm pen" data-a="sel" data-id="${x.id}" aria-label="Editar">✎</button></div>`;
+      return `<div class="item" data-a="sel" data-id="${x.id}" data-lp="1"><span class="n off">${k+1}</span><div class="nm"><b>${esc(x.name)}</b></div><b>${money(x.total)}</b>
+        <button class="btn sec sm" data-a="up" data-id="${x.id}">↑</button><button class="btn sec sm" data-a="down" data-id="${x.id}">↓</button></div>`;
+    }).join('')}</div>`;
   return h;
 }
 
@@ -420,7 +420,7 @@ document.addEventListener('click', e=>{
   if(e.target.id==='histbtn'){ S.tab='historial'; mixOpen=null; sel=null; loadHist(); return; }
   if(e.target.id==='reset'){
     if(confirm('¿Empezar una planilla nueva? La actual queda guardada en el historial.')){
-      (syncTimer ? syncSave() : Promise.resolve()).then(()=>{ S={photo:null,clients:[],tab:'planilla'}; manual={name:'',total:''}; photoRows=[]; pedi=null; ordering=null; mixOpen=null; render(); });
+      (syncTimer ? syncSave() : Promise.resolve()).then(()=>{ S={photo:null,clients:[],tab:'planilla'}; manual={name:'',addr:'',total:''}; photoRows=[]; pedi=null; ordering=null; mixOpen=null; render(); });
     }
     return;
   }
@@ -437,12 +437,12 @@ document.addEventListener('click', e=>{
     case 'madd': {
       if(!manual.name.trim()) return;
       const r = dedupe([manual], S.clients);
-      r.rows.forEach(d=>addClient(d.name, num(d.total)));
+      r.rows.forEach(d=>addClient(d.name, num(d.total), d.addr));
       dupMsg = r.dups ? 'Ese cliente ya está en la lista con el mismo importe.' : '';
-      manual = {name:'',total:''}; break; }
+      manual = {name:'',addr:'',total:''}; break; }
     case 'padd': {
       const r = dedupe(photoRows.filter(d=>d.name.trim()), S.clients);
-      r.rows.forEach(d=>addClient(d.name, num(d.total)));
+      r.rows.forEach(d=>addClient(d.name, num(d.total), d.addr));
       dupMsg = r.dups ? `Se omitieron ${r.dups} repetido${r.dups>1?'s':''} (mismo nombre e importe).` : '';
       photoRows = []; pedi = null; break; }
     case 'pr-edit': { const k=+el.dataset.i; pedi = pedi===k ? null : k; break; }
@@ -461,10 +461,10 @@ document.addEventListener('click', e=>{
       break;
     case 'ordend': a_finishOrder(); break;
     case 'go': S.tab='recorrido'; break;
-    case 'sel': sel = sel===id ? null : id; mixOpen=null; break;
-    case 'pay': setPay(c, el.dataset.k); sel=null; break;
+    case 'sel': sel = sel===id ? null : id; mixOpen = (sel===id && c.method==='mix') ? id : null; break;
+    case 'pay': setPay(c, el.dataset.k); sel = el.dataset.k==='mix' ? id : null; break;
     case 'nopay': sel=null; c.method=null; c.pay={}; c.done=true; mixOpen=null; break;
-    case 'mixok': mixOpen=null; break;
+    case 'mixok': mixOpen=null; sel=null; break;
     case 'skip': S.clients.splice(i,1); S.clients.push(c); break;
     case 'edit': mixOpen = mixOpen===id ? null : id; break;
     case 'tosum': S.tab='resumen'; break;
@@ -473,9 +473,11 @@ document.addEventListener('click', e=>{
 });
 
 function a_finishOrder(){
+  // los pendientes se reacomodan en los mismos lugares; los ya cobrados no se mueven
   const todo = S.clients.filter(x=>!x.done);
-  const first = ordering.map(get).filter(Boolean);
-  S.clients = S.clients.filter(x=>x.done).concat(first, todo.filter(x=>!ordering.includes(x.id)));
+  const nuevo = ordering.map(get).filter(x=>x&&!x.done).concat(todo.filter(x=>!ordering.includes(x.id)));
+  let k = 0;
+  S.clients = S.clients.map(x=> x.done ? x : nuevo[k++]);
   ordering = null;
 }
 
@@ -493,9 +495,9 @@ document.addEventListener('keydown', e=>{ if(e.key==='Enter' && e.target.id==='l
 document.addEventListener('input', e=>{
   if(e.target.id==='colorpick'){ applyColor(e.target.value); return; }
   const f = e.target.dataset.f; if(!f) return;
-  if(f==='cname'){ const c=get(e.target.dataset.id); if(c){ c.name=e.target.value; save(); } return; }
-  if(f==='mname'||f==='mtot'){ manual[f==='mname'?'name':'total']=e.target.value; return; }
-  if(f==='prname'||f==='prtot'){ photoRows[+e.target.dataset.i][f==='prname'?'name':'total']=e.target.value; return; }
+  if(f==='cname'||f==='caddr'){ const c=get(e.target.dataset.id); if(c){ c[f==='cname'?'name':'addr']=e.target.value; save(); } return; }
+  if(f==='mname'||f==='maddr'||f==='mtot'){ manual[f==='mname'?'name':f==='maddr'?'addr':'total']=e.target.value; return; }
+  if(f==='prname'||f==='praddr'||f==='prtot'){ photoRows[+e.target.dataset.i][f==='prname'?'name':f==='praddr'?'addr':'total']=e.target.value; return; }
   const c = get(e.target.dataset.id); if(!c) return;
   if(f==='total'){ c.total = num(e.target.value);
     if(c.method && c.method!=='mix') c.pay={[c.method]:c.total}; save(); }
@@ -526,7 +528,7 @@ async function runOCR(){
     if(r.status===401){ ocrBusy=''; S.photo=null; return logout(); }
     const d = await r.json();
     if(!r.ok) throw new Error(d.error||'error');
-    const dd = dedupe(d.clients.map(c=>({name:c.name, total:c.total||''})));
+    const dd = dedupe(d.clients.map(c=>({name:c.name, addr:c.addr||'', total:c.total||''})));
     dupMsg = dd.dups ? `Se quitaron ${dd.dups} repetido${dd.dups>1?'s':''} de la foto (mismo nombre e importe).` : '';
     if(dd.rows.length){ photoRows = dd.rows; pedi = null; }
     else alert('No se encontraron clientes. Cargalos a mano.');
