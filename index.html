@@ -87,7 +87,7 @@ header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
 <div id="syncmsg" class="hint" style="display:none;margin:8px 12px"></div>
 <main id="app"></main>
 <input type="file" id="foto" accept="image/*" capture="environment" hidden>
-<input type="file" id="fotog" accept="image/*" hidden>
+<input type="file" id="fotog" accept="image/*" multiple hidden>
 <div id="fotosheet" style="display:none;position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.5);align-items:flex-end">
   <div style="width:100%;background:var(--card);border-radius:20px 20px 0 0;padding:16px;display:flex;flex-direction:column;gap:10px">
     <button class="btn" data-a="foto-cam">Sacar foto</button>
@@ -278,6 +278,7 @@ function vPlanilla(){
     <h2>Cargar cliente</h2>
     ${ocrBusy?`<div class="hint">${esc(ocrBusy)}</div>`:''}
     ${dupMsg?`<div class="hint">${esc(dupMsg)}</div>`:''}
+    ${lastRestantes!==null?`<div class="mut" style="margin-bottom:6px">Fotos disponibles ahora: ${lastRestantes} de 3 (se renuevan cada 10 min)</div>`:''}
     <input data-f="mname" value="${esc(manual.name)}" placeholder="Cliente">
     <input data-f="maddr" value="${esc(manual.addr)}" placeholder="Dirección (opcional)" style="margin-top:8px">
     <div class="row" style="margin-top:8px">
@@ -508,35 +509,54 @@ document.addEventListener('input', e=>{
 });
 
 /* ---------- Foto + OCR ---------- */
+const MAX_FOTOS = 3;   // por tanda; el servidor además limita 3 fotos cada 10 minutos
+function reducirFoto(file){
+  return new Promise((ok,ko)=>{
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = ()=>{
+      const sc = Math.min(1, 1600/Math.max(img.width,img.height));
+      const cv = document.createElement('canvas');
+      cv.width=img.width*sc; cv.height=img.height*sc;
+      cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);
+      URL.revokeObjectURL(url); ok(cv.toDataURL('image/jpeg',.8));
+    };
+    img.onerror = ()=>ko(new Error('imagen inválida'));
+    img.src = url;
+  });
+}
 document.addEventListener('change', e=>{
   if((e.target.id!=='foto' && e.target.id!=='fotog') || !e.target.files[0]) return;
-  const img = new Image(), url = URL.createObjectURL(e.target.files[0]);
-  img.onload = ()=>{
-    const sc = Math.min(1, 1600/Math.max(img.width,img.height));
-    const cv = document.createElement('canvas');
-    cv.width=img.width*sc; cv.height=img.height*sc;
-    cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);
-    S.photo = cv.toDataURL('image/jpeg',.8);
-    URL.revokeObjectURL(url); e.target.value=''; S.tab='planilla'; runOCR();
-  };
-  img.src = url;
+  const files = [...e.target.files];
+  e.target.value = '';
+  S.tab = 'planilla';
+  leerFotos(files);
 });
-
-async function runOCR(){
+async function leerFotos(files){
   if(ocrBusy) return;
+  const msgs = [];
+  if(files.length>MAX_FOTOS){ msgs.push(`Solo se pueden subir ${MAX_FOTOS} fotos a la vez: se tomaron las primeras ${MAX_FOTOS}.`); files = files.slice(0,MAX_FOTOS); }
+  dupMsg = ''; let dups = 0, leidas = 0;
   try{
-    dupMsg=''; ocrBusy='Leyendo con IA…'; render();
-    const r = await fetch('/api/leer',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+TOKEN},body:JSON.stringify({image:S.photo})});
-    if(r.status===401){ ocrBusy=''; S.photo=null; return logout(); }
-    const d = await r.json();
-    if(!r.ok) throw new Error(d.error||'error');
-    const dd = dedupe(d.clients.map(c=>({name:c.name, addr:c.addr||'', total:fmtInput(c.total), warn:!!c.revisar})));
-    dupMsg = dd.dups ? `Se quitaron ${dd.dups} repetido${dd.dups>1?'s':''} de la foto (mismo nombre e importe).` : '';
-    if(dd.rows.length){ photoRows = dd.rows; pedi = null; }
-    else alert('No se encontraron clientes. Cargalos a mano.');
-  }catch(err){ alert('No se pudo leer la foto ('+err.message+'). Cargá los clientes a mano mirando la foto.'); }
-  ocrBusy=''; S.photo=null; render();
+    for(let i=0;i<files.length;i++){
+      ocrBusy = `Leyendo foto ${i+1} de ${files.length}…`; render();
+      const image = await reducirFoto(files[i]);
+      const r = await fetch('/api/leer',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+TOKEN},body:JSON.stringify({image})});
+      if(r.status===401){ ocrBusy=''; return logout(); }
+      const d = await r.json();
+      if(r.status===429){ msgs.push(d.error + (i<files.length-1 ? ` Se leyeron ${leidas} de ${files.length} fotos.` : '')); break; }
+      if(!r.ok) throw new Error(d.error||'error');
+      leidas++;
+      const dd = dedupe(photoRows.concat(d.clients.map(c=>({name:c.name, addr:c.addr||'', total:fmtInput(c.total), warn:!!c.revisar}))));
+      dups += photoRows.length + d.clients.length - dd.rows.length;
+      photoRows = dd.rows; pedi = null;
+      lastRestantes = d.restantes;
+    }
+    if(dups) msgs.push(`Se quitaron ${dups} repetido${dups>1?'s':''} (mismo nombre e importe).`);
+    if(leidas && !photoRows.length) msgs.push('No se encontraron clientes. Cargalos a mano.');
+  }catch(err){ msgs.push('No se pudo leer la foto ('+err.message+'). Cargá los clientes a mano mirando la foto.'); }
+  ocrBusy = ''; dupMsg = msgs.join(' '); render();
 }
+let lastRestantes = null;
 
 if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
 render();
