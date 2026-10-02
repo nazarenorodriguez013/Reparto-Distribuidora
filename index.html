@@ -12,37 +12,37 @@
 :root{--bg:#f3f4f6;--card:#fff;--tx:#111827;--mut:#6b7280;--pri:#1d4ed8;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--bd:#d1d5db}
 @media (prefers-color-scheme:dark){:root{--bg:#0f172a;--card:#1e293b;--tx:#f1f5f9;--mut:#94a3b8;--pri:#3b82f6;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--bd:#334155}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,sans-serif;padding-bottom:70px}
+body{margin:0;background:var(--bg);color:var(--tx);font:18px/1.4 system-ui,sans-serif;padding-bottom:90px}
 header{background:var(--pri);color:#fff;padding:12px 16px;font-weight:700;font-size:18px;display:flex;justify-content:space-between;align-items:center}
 header button{background:rgba(255,255,255,.2);color:#fff;border:0;border-radius:8px;padding:6px 10px;font-size:13px}
 nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--bd);z-index:5}
-nav button{flex:1;padding:14px 4px;border:0;background:none;color:var(--mut);font-size:15px;font-weight:600}
-nav button.on{color:var(--pri);border-top:3px solid var(--pri);padding-top:11px}
+nav button{flex:1;padding:20px 4px;border:0;background:none;color:var(--mut);font-size:18px;font-weight:700}
+nav button.on{color:var(--pri);border-top:3px solid var(--pri);padding-top:17px}
 main{padding:12px;max-width:640px;margin:0 auto}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:10px}
 h2{font-size:16px;margin:4px 0 8px}
-input,textarea,select{width:100%;padding:10px;border:1px solid var(--bd);border-radius:8px;font:inherit;background:var(--bg);color:var(--tx)}
+input,textarea,select{width:100%;padding:14px;min-height:52px;font-size:18px;border:1px solid var(--bd);border-radius:8px;font:inherit;background:var(--bg);color:var(--tx)}
 textarea{min-height:110px}
-.row{display:flex;gap:8px;align-items:center}
+.row{display:flex;gap:10px;align-items:center}
 .row>*{flex:1}
 .row>.fit{flex:none}
-.btn{padding:11px 14px;border:0;border-radius:10px;background:var(--pri);color:#fff;font-weight:600;font-size:15px}
+.btn{padding:16px 18px;min-height:56px;border:0;border-radius:14px;background:var(--pri);color:#fff;font-weight:700;font-size:18px}
 .btn.sec{background:var(--bg);color:var(--tx);border:1px solid var(--bd)}
-.btn.sm{padding:6px 10px;font-size:13px}
+.btn.sm{padding:0;min-width:48px;min-height:48px;font-size:20px}
 .btn.bad{background:var(--bad)}
-.mut{color:var(--mut);font-size:13px}
-.big{font-size:22px;font-weight:700}
+.mut{color:var(--mut);font-size:15px}
+.big{font-size:26px;font-weight:700}
 img.foto{width:100%;max-height:260px;object-fit:contain;border-radius:8px;background:#000;margin-top:8px}
-.item{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--bd)}
+.item{display:flex;align-items:center;gap:8px;padding:12px 0;border-bottom:1px solid var(--bd)}
 .item:last-child{border:0}
-.item .n{width:28px;height:28px;border-radius:50%;background:var(--pri);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none}
+.item .n{width:36px;height:36px;border-radius:50%;background:var(--pri);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;flex:none}
 .item .n.off{background:var(--mut)}
 .item .nm{flex:1;min-width:0}
 .item .nm b{display:block;overflow:hidden;text-overflow:ellipsis}
 .pays{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
-.pays button{padding:14px 6px;border-radius:10px;border:2px solid var(--bd);background:var(--bg);color:var(--tx);font-weight:600;font-size:15px}
+.pays button{padding:22px 6px;min-height:72px;border-radius:14px;border:2px solid var(--bd);background:var(--bg);color:var(--tx);font-weight:700;font-size:19px}
 .pays button.on{border-color:var(--pri);background:var(--pri);color:#fff}
-.tag{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:600;background:var(--bg);border:1px solid var(--bd)}
+.tag{display:inline-block;padding:4px 10px;border-radius:99px;font-size:14px;font-weight:600;background:var(--bg);border:1px solid var(--bd)}
 .tag.ok{color:var(--ok)}.tag.warn{color:var(--warn)}.tag.bad{color:var(--bad)}
 .tbl{width:100%;border-collapse:collapse}
 .tbl td{padding:8px 0;border-bottom:1px solid var(--bd)}
@@ -132,7 +132,7 @@ function vPlanilla(){
       return `<div class="item" ${ordering?`data-a="pick" data-id="${x.id}"`:''}>
         <span class="n ${ordering&&!pos?'off':''}">${ordering?(pos||'·'):pos}</span>
         <div class="nm"><b>${esc(x.name)}</b><span class="mut">${esc(x.addr)}</span></div>
-        <input data-f="total" data-id="${x.id}" inputmode="decimal" value="${x.total||''}" placeholder="$" style="width:90px">
+        <input data-f="total" data-id="${x.id}" inputmode="decimal" value="${x.total||''}" placeholder="$" style="width:110px">
         ${ordering?'':`<button class="btn sec sm" data-a="up" data-id="${x.id}">↑</button>
         <button class="btn sec sm" data-a="down" data-id="${x.id}">↓</button>
         <button class="btn sec sm" data-a="del" data-id="${x.id}">✕</button>`}
@@ -189,7 +189,7 @@ function vRecorrido(){
     const open = mixOpen===x.id;
     return `<div class="item" style="flex-wrap:wrap"><span class="n">${c.indexOf(x)+1}</span>
       <div class="nm"><b>${esc(x.name)}</b>${statusTag(x)}</div>
-      <button class="btn sec sm" data-a="edit" data-id="${x.id}">Editar</button>
+      <button class="btn sec" data-a="edit" data-id="${x.id}">Editar</button>
       ${open?`<div style="width:100%">${payButtons(x)}<button class="btn" data-a="mixok" data-id="${x.id}">Listo ✔</button></div>`:''}
     </div>`;}).join('')}</div>`;
   return h;
