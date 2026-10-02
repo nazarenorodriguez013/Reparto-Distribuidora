@@ -1,1 +1,1 @@
-{"name":"reparto","private":true}
+{"name":"reparto","private":true,"scripts":{"start":"node server.js"},"engines":{"node":">=18"}}
