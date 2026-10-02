@@ -31,8 +31,8 @@ const dbReady = pool ? pool.query(`CREATE TABLE IF NOT EXISTS planillas (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`).catch(e => console.error('DB:', e.message)) : null;
 
-const TYPES = { '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml' };
-const FILES = ['index.html', 'manifest.json', 'icon.svg'];
+const TYPES = { '.html': 'text/html; charset=utf-8', '.json': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.js': 'text/javascript; charset=utf-8' };
+const FILES = ['index.html', 'manifest.json', 'icon.svg', 'sw.js', 'icon-192.png', 'icon-512.png', 'icon-maskable.png', 'apple-touch-icon.png'];
 
 const send = (res, code, obj) => { res.statusCode = code; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(obj)); };
 function body(req, limit = 15e6) {
@@ -103,6 +103,7 @@ http.createServer(async (req, res) => {
     const name = url === '/' ? 'index.html' : url.slice(1);
     if (!FILES.includes(name)) { res.statusCode = 404; return res.end('No encontrado'); }
     res.setHeader('content-type', TYPES[path.extname(name)]);
+    if (name === 'sw.js' || name === 'index.html') res.setHeader('cache-control', 'no-cache');
     fs.createReadStream(path.join(__dirname, name)).pipe(res);
   } catch (e) {
     console.error(e);
