@@ -68,10 +68,16 @@ body.login{background:linear-gradient(160deg,var(--pri),#0f172a);min-height:100v
 .sw{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 14px}
 .sw button{width:52px;height:52px;border-radius:50%;border:3px solid var(--card);box-shadow:0 0 0 2px var(--bd)}
 .sw button.on{box-shadow:0 0 0 4px var(--tx)}
+header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
+#menu{display:none;position:fixed;top:58px;right:12px;z-index:20;min-width:200px;background:var(--card);border:1px solid var(--bd);border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.35);overflow:hidden}
+#menu.open{display:block}
+#menu button{display:block;width:100%;text-align:left;padding:15px 18px;border:0;border-bottom:1px solid var(--bd);background:none;color:var(--tx);font-size:16px;font-weight:600}
+#menu button:last-child{border:0;color:var(--bad)}
 </style>
 </head>
 <body>
-<header><span>🚚 Reparto Nestle<small id="whoami" style="display:block;font-size:13px;font-weight:500;opacity:.85"></small></span><span><button id="histbtn">Historial</button> <button id="cfgbtn">Configuración</button> <button id="reset">Nueva planilla</button> <button id="logout">Salir</button></span></header>
+<header><span>🚚 Reparto Nestle<small id="whoami" style="display:block;font-size:13px;font-weight:500;opacity:.85"></small></span><button id="menubtn" aria-label="Menú">☰</button></header>
+<div id="menu"><button id="histbtn">Historial</button><button id="cfgbtn">Configuración</button><button id="reset">Nueva planilla</button><button id="logout">Salir</button></div>
 <div id="syncmsg" class="hint" style="display:none;margin:8px 12px"></div>
 <main id="app"></main>
 <input type="file" id="foto" accept="image/*" capture="environment" hidden>
@@ -202,6 +208,7 @@ function addClient(name, total, addr){
 function render(){
   const logged = !!TOKEN;
   document.querySelector('nav').style.display = $('#navfoto').style.display = document.querySelector('header').style.display = logged ? '' : 'none';
+  $('#menu').classList.remove('open');
   document.body.classList.toggle('login', !logged);
   $('#whoami').textContent = USERNAME ? 'Usuario: ' + USERNAME.charAt(0).toUpperCase() + USERNAME.slice(1) : '';
   if(!logged){ $('#app').innerHTML = vLogin(); return; }
@@ -367,6 +374,8 @@ function setPay(c, k){
 
 document.addEventListener('click', e=>{
   if(lpFired){ lpFired=false; return; }
+  if(e.target.id==='menubtn'){ $('#menu').classList.toggle('open'); return; }
+  if(!e.target.closest('#menu')) $('#menu').classList.remove('open'); else if(e.target.id!=='reset') $('#menu').classList.remove('open');
   if(e.target.id==='logout') return logout();
   if(e.target.closest('#navfoto')){ $('#foto').click(); return; }
   const nav = e.target.closest('nav button[data-t]');
