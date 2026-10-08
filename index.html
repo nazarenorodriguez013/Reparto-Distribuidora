@@ -80,10 +80,25 @@ header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
 .item.done{background:rgba(22,163,74,.13);border-radius:10px;padding-left:8px;padding-right:8px;margin:2px 0;border-bottom:0}
 .item .n.ok{background:var(--ok);color:#fff}
 .item .pen{font-size:20px;color:var(--pri);padding:0 6px}
+#reporte{display:none}
+@media print{
+  body{background:#fff !important;color:#000;padding:0 !important}
+  body > *:not(#reporte){display:none !important}
+  #reporte{display:block;font:12px/1.35 system-ui,sans-serif;color:#000}
+  #reporte h1{font-size:20px;margin:0 0 2px}
+  #reporte h2{font-size:14px;margin:16px 0 6px;border-bottom:1px solid #000;padding-bottom:2px}
+  #reporte table{width:100%;border-collapse:collapse}
+  #reporte th,#reporte td{border-bottom:1px solid #bbb;padding:4px 5px;text-align:left;vertical-align:top}
+  #reporte th{background:#eee}
+  #reporte td.r,#reporte th.r{text-align:right;white-space:nowrap}
+  #reporte tr{page-break-inside:avoid}
+  #reporte .tot td{font-weight:700;border-top:2px solid #000}
+}
 </style>
 </head>
 <body>
 <header><span>🚚 Reparto Nestle<small id="whoami" style="display:block;font-size:13px;font-weight:500;opacity:.85"></small></span><button id="menubtn" aria-label="Menú">☰</button></header>
+<div id="reporte"></div>
 <div id="menu"><button id="histbtn">Historial</button><button id="cfgbtn">Configuración</button><button id="reset">Nueva planilla</button><button id="logout">Salir</button></div>
 <div id="syncmsg" class="hint" style="display:none;margin:8px 12px"></div>
 <main id="app"></main>
@@ -373,13 +388,52 @@ function totals(){
   });
   return t;
 }
+function buildReporte(){
+  const t = totals(), c = S.clients;
+  const cobrado = t.ef+t.tr+t.ch+t.ec;
+  const hoy = new Date().toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'});
+  const medios = x => KEYS.filter(k=>(x.pay[k]||0)>0).map(k=>`${LABEL[k]} ${money(x.pay[k])}`).join(' · ');
+  const estado = x => {
+    if(!x.done) return 'Sin visitar';
+    const rest = x.total - sum(x);
+    const m = medios(x);
+    return [m, rest>0.005 ? `Sin cobrar ${money(rest)}` : '', !m && rest<=0.005 ? '—' : ''].filter(Boolean).join(' · ') || 'No pagó';
+  };
+  const pend = c.filter(x=>x.total - sum(x) > 0.005 || (x.pay.cc||0)>0 || (x.pay.fi||0)>0);
+  const fila = (a,b) => `<tr><td>${a}</td><td class="r">${money(b)}</td></tr>`;
+  return `<h1>Reparto Nestle</h1>
+  <div>Fecha: ${hoy}${USERNAME?' · Usuario: '+esc(USERNAME):''} · Visitados ${c.filter(x=>x.done).length} de ${c.length}</div>
+  <h2>Lo que tiene que haber</h2>
+  <table>${fila('Efectivo',t.ef)}${fila('Transferencia',t.tr)}${fila('Cheque',t.ch)}${fila('E-Cheq',t.ec)}
+    <tr class="tot"><td>Total cobrado</td><td class="r">${money(cobrado)}</td></tr>
+    ${fila('Cuenta corriente',t.cc)}${fila('Firmado',t.fi)}${fila('Sin cobrar / sin marcar',t.sin)}
+    <tr class="tot"><td>Total planilla</td><td class="r">${money(t.total)}</td></tr></table>
+  <h2>Detalle por cliente</h2>
+  <table><tr><th>#</th><th>Cliente</th><th>Dirección</th><th class="r">Importe</th><th>Pago</th></tr>
+    ${c.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.name)}</td><td>${esc(x.addr||'')}</td><td class="r">${money(x.total)}</td><td>${esc(estado(x))}</td></tr>`).join('')}
+    <tr class="tot"><td colspan="3">Total</td><td class="r">${money(t.total)}</td><td></td></tr></table>
+  <h2>Clientes pendientes a cobrar (${pend.length})</h2>
+  ${pend.length?`<table><tr><th>Cliente</th><th>Detalle</th><th class="r">Pendiente</th></tr>
+    ${pend.map(x=>{ const rest=Math.max(0,x.total-sum(x)), cc=x.pay.cc||0, fi=x.pay.fi||0;
+      const det=[!x.done?'Sin visitar':'', cc>0?'Cta cte '+money(cc):'', fi>0?'Firmado '+money(fi):'', rest>0.005?'Sin cobrar '+money(rest):''].filter(Boolean).join(' · ');
+      return `<tr><td>${esc(x.name)}</td><td>${det}</td><td class="r">${money(cc+fi+rest)}</td></tr>`; }).join('')}
+    <tr class="tot"><td colspan="2">Total pendiente</td><td class="r">${money(t.cc+t.fi+t.sin)}</td></tr></table>`:'<div>Nada pendiente.</div>'}`;
+}
+function exportarPDF(){
+  $('#reporte').innerHTML = buildReporte();
+  const prev = document.title;
+  document.title = 'Reparto Nestle ' + new Date().toISOString().slice(0,10);   // nombre sugerido del archivo
+  window.addEventListener('afterprint', ()=>{ document.title = prev; }, {once:true});
+  window.print();
+}
 function vResumen(){
   if(!S.clients.length) return '<div class="card">No hay datos todavía.</div>';
   const t = totals();
   const cobrado = t.ef+t.tr+t.ch+t.ec;
   const pend = S.clients.filter(c=>c.total - sum(c) > 0.005 || (c.pay.cc||0)>0 || (c.pay.fi||0)>0);
   return `
-  <div class="card"><h2>Lo que tiene que haber</h2>
+  <div class="card"><button class="btn" style="width:100%;margin-bottom:12px" data-a="pdf">Exportar a PDF</button>
+    <h2>Lo que tiene que haber</h2>
     <table class="tbl">
       <tr><td>💵 Efectivo</td><td>${money(t.ef)}</td></tr>
       <tr><td>🏦 Transferencia</td><td>${money(t.tr)}</td></tr>
@@ -475,6 +529,7 @@ document.addEventListener('click', e=>{
     case 'skip': S.clients.splice(i,1); S.clients.push(c); break;
     case 'edit': mixOpen = mixOpen===id ? null : id; break;
     case 'tosum': S.tab='resumen'; break;
+    case 'pdf': exportarPDF(); return;
   }
   render();
 });
