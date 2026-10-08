@@ -94,10 +94,14 @@ header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
   #reporte tr{page-break-inside:avoid}
   #reporte .tot td{font-weight:700;border-top:2px solid #000}
 }
+.seg{display:flex;gap:8px}
+.seg button{flex:1;padding:12px 4px;min-height:46px;border-radius:12px;border:2px solid var(--bd);background:var(--bg);color:var(--tx);font-weight:700;font-size:15px}
+.seg button.on{border-color:var(--bad);background:var(--bad);color:#fff}
 </style>
 </head>
 <body>
 <header><span>🚚 Reparto Nestle<small id="whoami" style="display:block;font-size:13px;font-weight:500;opacity:.85"></small></span><button id="menubtn" aria-label="Menú">☰</button></header>
+<datalist id="motivos"></datalist>
 <div id="reporte"></div>
 <input type="file" id="respfile" accept=".json,application/json" hidden>
 <div id="menu"><button id="histbtn">Historial</button><button id="cfgbtn">Configuración</button><button id="reset">Nueva planilla</button><button id="bkpbtn">Descargar respaldo</button><button id="rstbtn">Cargar respaldo</button><button id="logout">Salir</button></div>
@@ -121,7 +125,7 @@ header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
 <script>
 const METHODS = [
   ['ef','Efectivo'],['tr','Transferencia'],['ch','Cheque'],
-  ['ec','E-Cheq'],['cc','Cuenta corriente'],['fi','Firmado'],['mix','Pago mixto']
+  ['ec','E-Cheq'],['cc','Cuenta corriente'],['fi','Firmado'],['mix','Mixto / Rechazado']
 ];
 const LABEL = Object.fromEntries(METHODS);
 const KEYS = ['ef','tr','ch','ec','cc','fi'];
@@ -239,6 +243,11 @@ const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&
 const money = n => '$ ' + (Math.round(n*100)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const fmtInput = n => n ? String(Math.round(n*100)/100).replace('.',',') : '';
 const sum = c => KEYS.reduce((a,k)=>a+(c.pay[k]||0),0);
+// Lo rechazado (parcial o total) se resta de lo que hay que cobrar; el importe del pedido no cambia.
+const rechMonto = c => c.rech ? Math.min(c.total, Math.max(0, c.rech.monto||0)) : 0;
+const debe = c => c.total - rechMonto(c);
+const MOTIVOS = ['Cerrado','No estaba','Producto dañado','Error de pedido','No lo pidió','Sin plata','Vencido'];
+$('#motivos').innerHTML = MOTIVOS.map(m=>`<option value="${m}">`).join('');
 const num = v => { v=String(v).trim().replace(/\./g,'').replace(',','.'); const n=parseFloat(v); return isNaN(n)?0:n; };
 const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const get = id => S.clients.find(c=>c.id===id);
@@ -338,21 +347,32 @@ function payButtons(c){
   ${mixOpen===c.id?mixPanel(c):''}`;
 }
 function mixPanel(c){
-  const rest = c.total - sum(c);
-  return `<div class="mix">${METHODS.filter(m=>m[0]!=='mix').map(([k,l])=>
-    `<div><label>${l}</label><input data-f="mix" data-k="${k}" data-id="${c.id}" inputmode="decimal" value="${fmtInput(c.pay[k])}" placeholder="0"></div>`).join('')}</div>
-    <div class="mut" id="mixrest-${c.id}">${restTxt(rest)}</div>`;
+  const r = c.rech || {tipo:'ninguno',monto:0,motivo:''};
+  const tipo = r.tipo || 'ninguno';
+  return `<div class="mut" style="margin:10px 0 4px">Rechazado</div>
+    <div class="seg">${[['ninguno','Nada'],['parcial','Parcial'],['total','Total']].map(([k,l])=>
+      `<button class="${tipo===k?'on':''}" data-a="rech" data-k="${k}" data-id="${c.id}">${l}</button>`).join('')}</div>
+    ${tipo==='parcial'?`<input data-f="rmonto" data-id="${c.id}" inputmode="decimal" value="${fmtInput(r.monto)}" placeholder="Monto rechazado $" style="margin-top:8px;text-align:right">`:''}
+    ${tipo!=='ninguno'?`<input data-f="rmotivo" data-id="${c.id}" list="motivos" value="${esc(r.motivo||'')}" placeholder="Motivo (ej: cerrado, producto dañado)" style="margin-top:8px">`:''}
+    ${tipo==='total'?'<div class="mut" style="margin-top:8px">Se rechaza todo el pedido: no hay nada para cobrar.</div>':`
+    <div class="mut" style="margin:10px 0 4px">Cómo paga lo que queda</div>
+    <div class="mix">${METHODS.filter(m=>m[0]!=='mix').map(([k,l])=>
+      `<div><label>${l}</label><input data-f="mix" data-k="${k}" data-id="${c.id}" inputmode="decimal" value="${fmtInput(c.pay[k])}" placeholder="0"></div>`).join('')}</div>
+    <div class="mut" id="mixrest-${c.id}">${restTxt(debe(c)-sum(c))}</div>`}`;
 }
-const restTxt = r => r===0?'Completo ✔': r>0?`Falta asignar ${money(r)}`:`Te pasaste ${money(-r)}`;
+const restTxt = r => Math.abs(r)<0.005?'Completo ✔': r>0?`Falta asignar ${money(r)}`:`Te pasaste ${money(-r)}`;
 
 function statusTag(c){
   if(!c.done) return '<span class="tag">Sin visitar</span>';
-  const rest = c.total - sum(c), cc = c.pay.cc||0;
-  if(rest>0.005) return `<span class="tag bad">Pendiente ${money(rest)}</span>`;
-  if(cc>0) return `<span class="tag warn">Cta cte ${money(cc)}</span>`;
-  if((c.pay.fi||0)>0) return `<span class="tag warn">Firmado ${money(c.pay.fi)}</span>`;
-  const med = c.method && c.method!=='mix' ? LABEL[c.method] : 'Mixto';
-  return `<span class="tag ok">Cobrado · ${med}</span>`;
+  const r = c.rech, rt = r && r.tipo==='total', rp = r && r.tipo==='parcial' && rechMonto(c)>0;
+  if(rt) return '<span class="tag bad">Rechazado total</span>';
+  const rest = debe(c) - sum(c), cc = c.pay.cc||0;
+  let t;
+  if(rest>0.005) t = `<span class="tag bad">Pendiente ${money(rest)}</span>`;
+  else if(cc>0) t = `<span class="tag warn">Cta cte ${money(cc)}</span>`;
+  else if((c.pay.fi||0)>0) t = `<span class="tag warn">Firmado ${money(c.pay.fi)}</span>`;
+  else t = `<span class="tag ok">Cobrado · ${c.method && c.method!=='mix' ? LABEL[c.method] : 'Mixto'}</span>`;
+  return t + (rp ? ` <span class="tag bad">Rechazado ${money(rechMonto(c))}</span>` : '');
 }
 
 function vRecorrido(){
@@ -381,11 +401,12 @@ function vRecorrido(){
 }
 
 function totals(){
-  const t = {ef:0,tr:0,ch:0,ec:0,cc:0,fi:0,sin:0,total:0};
+  const t = {ef:0,tr:0,ch:0,ec:0,cc:0,fi:0,sin:0,total:0,rechT:0,rechP:0};
   S.clients.forEach(c=>{
     t.total += c.total;
     KEYS.forEach(k=>t[k]+=c.pay[k]||0);
-    t.sin += Math.max(0, c.total - sum(c));
+    t.sin += Math.max(0, debe(c) - sum(c));
+    if(c.rech && c.rech.tipo==='total') t.rechT += rechMonto(c); else t.rechP += rechMonto(c);
   });
   return t;
 }
@@ -396,26 +417,35 @@ function buildReporte(){
   const medios = x => KEYS.filter(k=>(x.pay[k]||0)>0).map(k=>`${LABEL[k]} ${money(x.pay[k])}`).join(' · ');
   const estado = x => {
     if(!x.done) return 'Sin visitar';
-    const rest = x.total - sum(x);
+    const rest = debe(x) - sum(x);
     const m = medios(x);
-    return [m, rest>0.005 ? `Sin cobrar ${money(rest)}` : '', !m && rest<=0.005 ? '—' : ''].filter(Boolean).join(' · ') || 'No pagó';
+    const rz = x.rech && rechMonto(x)>0 ? `Rechazado ${x.rech.tipo==='total'?'total':'parcial'} ${money(rechMonto(x))}${x.rech.motivo?' ('+x.rech.motivo+')':''}` : '';
+    return [m, rz, rest>0.005 ? `Sin cobrar ${money(rest)}` : '', !m && !rz && rest<=0.005 ? '—' : ''].filter(Boolean).join(' · ') || 'No pagó';
   };
-  const pend = c.filter(x=>x.total - sum(x) > 0.005 || (x.pay.cc||0)>0 || (x.pay.fi||0)>0);
+  const pend = c.filter(x=>debe(x) - sum(x) > 0.005 || (x.pay.cc||0)>0 || (x.pay.fi||0)>0);
+  const rechazados = c.filter(x=>x.rech && rechMonto(x)>0);
   const fila = (a,b) => `<tr><td>${a}</td><td class="r">${money(b)}</td></tr>`;
   return `<h1>Reparto Nestle</h1>
   <div>Fecha: ${hoy}${USERNAME?' · Usuario: '+esc(USERNAME):''} · Visitados ${c.filter(x=>x.done).length} de ${c.length}</div>
+  <h2>Pedidos</h2>
+  <table><tr class="tot"><td>Total de todos los pedidos</td><td class="r">${money(t.total)}</td></tr>
+    ${fila('Rechazado total (−)',t.rechT)}${fila('Rechazado parcial (−)',t.rechP)}
+    <tr class="tot"><td>Total a cobrar</td><td class="r">${money(t.total-t.rechT-t.rechP)}</td></tr></table>
   <h2>Lo que tiene que haber</h2>
   <table>${fila('Efectivo',t.ef)}${fila('Transferencia',t.tr)}${fila('Cheque',t.ch)}${fila('E-Cheq',t.ec)}
     <tr class="tot"><td>Total cobrado</td><td class="r">${money(cobrado)}</td></tr>
-    ${fila('Cuenta corriente',t.cc)}${fila('Firmado',t.fi)}${fila('Sin cobrar / sin marcar',t.sin)}
-    <tr class="tot"><td>Total planilla</td><td class="r">${money(t.total)}</td></tr></table>
+    ${fila('Cuenta corriente',t.cc)}${fila('Firmado',t.fi)}${fila('Sin cobrar / sin marcar',t.sin)}</table>
   <h2>Detalle por cliente</h2>
   <table><tr><th>#</th><th>Cliente</th><th>Dirección</th><th class="r">Importe</th><th>Pago</th></tr>
     ${c.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.name)}</td><td>${esc(x.addr||'')}</td><td class="r">${money(x.total)}</td><td>${esc(estado(x))}</td></tr>`).join('')}
     <tr class="tot"><td colspan="3">Total</td><td class="r">${money(t.total)}</td><td></td></tr></table>
+  ${rechazados.length?`<h2>Pedidos rechazados (${rechazados.length})</h2>
+  <table><tr><th>Cliente</th><th>Tipo y motivo</th><th class="r">Monto</th></tr>
+    ${rechazados.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.rech.tipo==='total'?'Total':'Parcial'}${x.rech.motivo?' · '+esc(x.rech.motivo):''}</td><td class="r">${money(rechMonto(x))}</td></tr>`).join('')}
+    <tr class="tot"><td colspan="2">Total rechazado</td><td class="r">${money(t.rechT+t.rechP)}</td></tr></table>`:''}
   <h2>Clientes pendientes a cobrar (${pend.length})</h2>
   ${pend.length?`<table><tr><th>Cliente</th><th>Detalle</th><th class="r">Pendiente</th></tr>
-    ${pend.map(x=>{ const rest=Math.max(0,x.total-sum(x)), cc=x.pay.cc||0, fi=x.pay.fi||0;
+    ${pend.map(x=>{ const rest=Math.max(0,debe(x)-sum(x)), cc=x.pay.cc||0, fi=x.pay.fi||0;
       const det=[!x.done?'Sin visitar':'', cc>0?'Cta cte '+money(cc):'', fi>0?'Firmado '+money(fi):'', rest>0.005?'Sin cobrar '+money(rest):''].filter(Boolean).join(' · ');
       return `<tr><td>${esc(x.name)}</td><td>${det}</td><td class="r">${money(cc+fi+rest)}</td></tr>`; }).join('')}
     <tr class="tot"><td colspan="2">Total pendiente</td><td class="r">${money(t.cc+t.fi+t.sin)}</td></tr></table>`:'<div>Nada pendiente.</div>'}`;
@@ -454,7 +484,7 @@ document.addEventListener('change', e=>{
     if(!confirm(`Respaldo del ${fecha}: ${cl.length} clientes.\n\nEsto reemplaza la planilla que tenés ahora${S.clients.length?' (antes se descarga un respaldo de la actual)':''}. ¿Seguir?`)) return;
     (async()=>{
       if(S.clients.length) await descargarRespaldo(false);
-      S.clients = cl.map(c=>({ id:c.id||uid(), name:String(c.name||''), addr:String(c.addr||''), total:Number(c.total)||0, pay:c.pay||{}, done:!!c.done, method:c.method||null }));
+      S.clients = cl.map(c=>({ id:c.id||uid(), name:String(c.name||''), addr:String(c.addr||''), total:Number(c.total)||0, pay:c.pay||{}, rech:c.rech||null, done:!!c.done, method:c.method||null }));
       S.pid = null; S.tab = 'planilla'; ordering=null; sel=null; mixOpen=null; editId=null;
       render(); aviso(`Respaldo cargado: ${S.clients.length} clientes.`);
     })();
@@ -472,10 +502,18 @@ function vResumen(){
   if(!S.clients.length) return '<div class="card">No hay datos todavía.</div>';
   const t = totals();
   const cobrado = t.ef+t.tr+t.ch+t.ec;
-  const pend = S.clients.filter(c=>c.total - sum(c) > 0.005 || (c.pay.cc||0)>0 || (c.pay.fi||0)>0);
+  const pend = S.clients.filter(c=>debe(c) - sum(c) > 0.005 || (c.pay.cc||0)>0 || (c.pay.fi||0)>0);
+  const rechazados = S.clients.filter(c=>c.rech && rechMonto(c)>0);
   return `
   <div class="card"><button class="btn" style="width:100%;margin-bottom:12px" data-a="pdf">Exportar a PDF</button>
-    <h2>Lo que tiene que haber</h2>
+    <h2>Pedidos</h2>
+    <table class="tbl">
+      <tr><td><b>Total de todos los pedidos</b></td><td>${money(t.total)}</td></tr>
+      <tr><td>🚫 Rechazado total</td><td style="color:var(--bad)">− ${money(t.rechT)}</td></tr>
+      <tr><td>🚫 Rechazado parcial</td><td style="color:var(--bad)">− ${money(t.rechP)}</td></tr>
+      <tr><td><b>Total a cobrar</b></td><td>${money(t.total - t.rechT - t.rechP)}</td></tr>
+    </table>
+    <h2 style="margin-top:14px">Lo que tiene que haber</h2>
     <table class="tbl">
       <tr><td>💵 Efectivo</td><td>${money(t.ef)}</td></tr>
       <tr><td>🏦 Transferencia</td><td>${money(t.tr)}</td></tr>
@@ -485,13 +523,15 @@ function vResumen(){
       <tr><td>📒 Cuenta corriente</td><td>${money(t.cc)}</td></tr>
       <tr><td>✍️ Firmado</td><td>${money(t.fi)}</td></tr>
       <tr><td>⏳ Sin cobrar / sin marcar</td><td style="color:var(--bad)">${money(t.sin)}</td></tr>
-      <tr><td><b>Total planilla</b></td><td>${money(t.total)}</td></tr>
     </table>
     <div class="mut" style="margin-top:6px">Visitados ${S.clients.filter(c=>c.done).length} de ${S.clients.length}</div>
   </div>
+  ${rechazados.length?`<div class="card"><h2>Pedidos rechazados (${rechazados.length})</h2>
+    ${rechazados.map(c=>`<div class="item"><div class="nm"><b>${esc(c.name)}</b><span class="mut show">${c.rech.tipo==='total'?'Total':'Parcial'}${c.rech.motivo?' · '+esc(c.rech.motivo):''}</span></div><b>${money(rechMonto(c))}</b></div>`).join('')}
+    <div class="row" style="margin-top:8px"><b>Total rechazado</b><b style="text-align:right">${money(t.rechT+t.rechP)}</b></div></div>`:''}
   <div class="card"><h2>Clientes pendientes a cobrar (${pend.length})</h2>
     ${pend.length?pend.map(c=>{
-      const rest = Math.max(0, c.total - sum(c)), cc = c.pay.cc||0, fi = c.pay.fi||0;
+      const rest = Math.max(0, debe(c) - sum(c)), cc = c.pay.cc||0, fi = c.pay.fi||0;
       const det = [!c.done?'Sin visitar':'', cc>0?'Cta cte '+money(cc):'', fi>0?'Firmado '+money(fi):'', rest>0.005?'Sin cobrar '+money(rest):''].filter(Boolean).join(' · ');
       return `<div class="item"><div class="nm"><b>${esc(c.name)}</b><span class="mut show">${det}</span></div>
       <b>${money(cc+fi+rest)}</b></div>`;}).join('')
@@ -503,7 +543,7 @@ function vResumen(){
 /* ---------- Acciones ---------- */
 function setPay(c, k){
   if(k==='mix'){ c.method='mix'; c.done=true; mixOpen=c.id; return; }
-  c.method=k; c.done=true; c.pay={[k]:c.total}; mixOpen=null;
+  c.method=k; c.done=true; c.pay={[k]:c.total}; c.rech=null; mixOpen=null;
 }
 
 document.addEventListener('click', e=>{
@@ -576,7 +616,13 @@ document.addEventListener('click', e=>{
     case 'go': S.tab='recorrido'; break;
     case 'sel': sel = sel===id ? null : id; mixOpen = (sel===id && c.method==='mix') ? id : null; break;
     case 'pay': setPay(c, el.dataset.k); sel = el.dataset.k==='mix' ? id : null; break;
-    case 'nopay': sel=null; c.method=null; c.pay={}; c.done=true; mixOpen=null; break;
+    case 'nopay': sel=null; c.method=null; c.pay={}; c.rech=null; c.done=true; mixOpen=null; break;
+    case 'rech': {
+      const k = el.dataset.k, prev = c.rech || {};
+      if(k==='ninguno') c.rech = null;
+      else if(k==='total'){ c.rech = {tipo:'total', monto:c.total, motivo:prev.motivo||''}; c.pay = {}; }
+      else c.rech = {tipo:'parcial', monto:prev.tipo==='parcial'?prev.monto:0, motivo:prev.motivo||''};
+      c.method='mix'; c.done=true; mixOpen=c.id; break; }
     case 'mixok': mixOpen=null; sel=null; break;
     case 'skip': S.clients.splice(i,1); S.clients.push(c); break;
     case 'edit': mixOpen = mixOpen===id ? null : id; break;
@@ -613,10 +659,12 @@ document.addEventListener('input', e=>{
   if(f==='mname'||f==='maddr'||f==='mtot'){ manual[f==='mname'?'name':f==='maddr'?'addr':'total']=e.target.value; return; }
   if(f==='prname'||f==='praddr'||f==='prtot'){ photoRows[+e.target.dataset.i][f==='prname'?'name':f==='praddr'?'addr':'total']=e.target.value; return; }
   const c = get(e.target.dataset.id); if(!c) return;
-  if(f==='total'){ c.total = num(e.target.value);
+  if(f==='total'){ c.total = num(e.target.value); if(c.rech && c.rech.tipo==='total') c.rech.monto = c.total;
     if(c.method && c.method!=='mix') c.pay={[c.method]:c.total}; save(); }
   if(f==='mix'){ c.pay[e.target.dataset.k] = num(e.target.value);
-    const r=$('#mixrest-'+c.id); if(r) r.textContent = restTxt(c.total-sum(c)); save(); }
+    const r=$('#mixrest-'+c.id); if(r) r.textContent = restTxt(debe(c)-sum(c)); save(); }
+  if(f==='rmonto'){ if(c.rech) c.rech.monto = num(e.target.value); const r=$('#mixrest-'+c.id); if(r) r.textContent = restTxt(debe(c)-sum(c)); save(); }
+  if(f==='rmotivo'){ if(c.rech) c.rech.motivo = e.target.value; save(); }
 });
 
 /* ---------- Foto + OCR ---------- */
