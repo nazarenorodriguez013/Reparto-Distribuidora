@@ -99,7 +99,8 @@ header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
 <body>
 <header><span>🚚 Reparto Nestle<small id="whoami" style="display:block;font-size:13px;font-weight:500;opacity:.85"></small></span><button id="menubtn" aria-label="Menú">☰</button></header>
 <div id="reporte"></div>
-<div id="menu"><button id="histbtn">Historial</button><button id="cfgbtn">Configuración</button><button id="reset">Nueva planilla</button><button id="logout">Salir</button></div>
+<input type="file" id="respfile" accept=".json,application/json" hidden>
+<div id="menu"><button id="histbtn">Historial</button><button id="cfgbtn">Configuración</button><button id="reset">Nueva planilla</button><button id="bkpbtn">Descargar respaldo</button><button id="rstbtn">Cargar respaldo</button><button id="logout">Salir</button></div>
 <div id="syncmsg" class="hint" style="display:none;margin:8px 12px"></div>
 <main id="app"></main>
 <input type="file" id="foto" accept="image/*" capture="environment" hidden>
@@ -419,6 +420,47 @@ function buildReporte(){
       return `<tr><td>${esc(x.name)}</td><td>${det}</td><td class="r">${money(cc+fi+rest)}</td></tr>`; }).join('')}
     <tr class="tot"><td colspan="2">Total pendiente</td><td class="r">${money(t.cc+t.fi+t.sin)}</td></tr></table>`:'<div>Nada pendiente.</div>'}`;
 }
+/* ---------- Respaldo en archivo ---------- */
+let avisoTimer = null;
+function aviso(msg){ setSync(msg); clearTimeout(avisoTimer); avisoTimer = setTimeout(()=>setSync(''), 8000); }
+function guardarArchivo(nombre, texto){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([texto],{type:'application/json'}));
+  a.download = nombre; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+async function descargarRespaldo(conHistorial){
+  const ahora = new Date();
+  const datos = { app:'reparto-nestle', version:1, fecha:ahora.toISOString(), usuario:USERNAME,
+    actual:{ pid:S.pid||null, clients:S.clients }, historial:null };
+  if(conHistorial && TOKEN && !dbOff){
+    try{
+      const lista = (await api('GET','/api/planillas')).planillas;
+      datos.historial = await Promise.all(lista.map(async h=>({ id:h.id, creada:h.created_at, clients:(await api('GET','/api/planillas/'+h.id)).data.clients })));
+    }catch(e){ datos.historial = null; }
+  }
+  const nombre = `reparto-respaldo-${ahora.toISOString().slice(0,10)}-${ahora.toTimeString().slice(0,5).replace(':','')}.json`;
+  guardarArchivo(nombre, JSON.stringify(datos,null,1));
+  aviso(`Respaldo descargado: ${nombre} (${S.clients.length} clientes${datos.historial?` + ${datos.historial.length} planillas del historial`:''}). Buscalo en Descargas.`);
+}
+document.addEventListener('change', e=>{
+  if(e.target.id!=='respfile' || !e.target.files[0]) return;
+  const f = e.target.files[0]; e.target.value = '';
+  f.text().then(txt=>{
+    let d; try{ d = JSON.parse(txt); }catch(_){ d = null; }
+    const cl = d && d.app==='reparto-nestle' && d.actual && Array.isArray(d.actual.clients) ? d.actual.clients : null;
+    if(!cl){ alert('Ese archivo no es un respaldo de Reparto Nestle.'); return; }
+    const fecha = d.fecha ? new Date(d.fecha).toLocaleString('es-AR') : 'fecha desconocida';
+    if(!confirm(`Respaldo del ${fecha}: ${cl.length} clientes.\n\nEsto reemplaza la planilla que tenés ahora${S.clients.length?' (antes se descarga un respaldo de la actual)':''}. ¿Seguir?`)) return;
+    (async()=>{
+      if(S.clients.length) await descargarRespaldo(false);
+      S.clients = cl.map(c=>({ id:c.id||uid(), name:String(c.name||''), addr:String(c.addr||''), total:Number(c.total)||0, pay:c.pay||{}, done:!!c.done, method:c.method||null }));
+      S.pid = null; S.tab = 'planilla'; ordering=null; sel=null; mixOpen=null; editId=null;
+      render(); aviso(`Respaldo cargado: ${S.clients.length} clientes.`);
+    })();
+  }).catch(()=>alert('No se pudo leer el archivo.'));
+});
+
 function exportarPDF(){
   $('#reporte').innerHTML = buildReporte();
   const prev = document.title;
@@ -479,9 +521,19 @@ document.addEventListener('click', e=>{
   if(nav){ S.tab=nav.dataset.t; mixOpen=null; ordering=null; editId=null; return render(); }
   if(e.target.id==='cfgbtn'){ S.tab='config'; mixOpen=null; sel=null; render(); return; }
   if(e.target.id==='histbtn'){ S.tab='historial'; mixOpen=null; sel=null; loadHist(); return; }
+  if(e.target.id==='bkpbtn'){ descargarRespaldo(true); return; }
+  if(e.target.id==='rstbtn'){ $('#respfile').click(); return; }
   if(e.target.id==='reset'){
-    if(confirm('¿Empezar una planilla nueva? La actual queda guardada en el historial.')){
-      (syncTimer ? syncSave() : Promise.resolve()).then(()=>{ S={photo:null,clients:[],tab:'planilla'}; manual={name:'',addr:'',total:''}; photoRows=[]; pedi=null; ordering=null; mixOpen=null; render(); });
+    const sinGuardar = S.clients.length && (!S.pid || dbOff);
+    const msg = sinGuardar
+      ? 'Esta planilla NO está guardada en el servidor y se perdería. Antes de empezar una nueva se va a descargar un respaldo en el celular. ¿Continuar?'
+      : '¿Empezar una planilla nueva? La actual queda guardada en el historial.';
+    if(confirm(msg)){
+      (async()=>{
+        if(syncTimer) await syncSave();
+        if(sinGuardar) await descargarRespaldo(false);
+        S={photo:null,clients:[],tab:'planilla'}; manual={name:'',addr:'',total:''}; photoRows=[]; pedi=null; ordering=null; mixOpen=null; render();
+      })();
     }
     return;
   }
