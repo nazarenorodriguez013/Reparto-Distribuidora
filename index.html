@@ -96,6 +96,7 @@ header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
 }
 .seg{display:flex;gap:8px}
 .seg button{flex:1;padding:12px 4px;min-height:46px;border-radius:12px;border:2px solid var(--bd);background:var(--bg);color:var(--tx);font-weight:700;font-size:15px}
+.pays button.bad-on{border-color:var(--bad);background:var(--bad);color:#fff}
 .seg button.on{border-color:var(--bad);background:var(--bad);color:#fff}
 </style>
 </head>
@@ -139,6 +140,7 @@ let loginErr = '', loginUser = '';
 let USERNAME = '';
 try{ USERNAME = localStorage.getItem('reparto-user') || ''; }catch(e){}
 let editId = null;        // cliente abierto para editar en Planilla
+let rechOpen = null;      // cliente con el panel de rechazo abierto
 let sel = null;           // cliente abierto en 'Siguientes'
 let mixOpen = null;       // id de cliente con panel mixto abierto
 let dupMsg = '';
@@ -341,24 +343,28 @@ function vPlanilla(){
 }
 
 function payButtons(c){
-  const m = c.method;
-  return `<div class="pays">${METHODS.map(([k,l])=>`<button class="${m===k?'on':''}" ${k==='mix'?'style="grid-column:1/3"':''} data-a="pay" data-k="${k}" data-id="${c.id}">${l}</button>`).join('')}
-    <button data-a="nopay" data-id="${c.id}" class="${c.done&&!sum(c)&&!c.method?'on':''}" style="grid-column:1/3">No pagó / no estaba</button></div>
-  ${mixOpen===c.id?mixPanel(c):''}`;
+  const m = c.method, rz = c.rech && rechMonto(c)>0;
+  return `<div class="pays">${METHODS.filter(x=>x[0]!=='mix').map(([k,l])=>`<button class="${m===k?'on':''}" data-a="pay" data-k="${k}" data-id="${c.id}">${l}</button>`).join('')}
+    <button class="${m==='mix'?'on':''}" data-a="pay" data-k="mix" data-id="${c.id}">Pago mixto</button>
+    <button class="${rz||rechOpen===c.id?'bad-on':''}" data-a="rechopen" data-id="${c.id}">Rechazado</button>
+    <button data-a="nopay" data-id="${c.id}" class="${c.done&&!sum(c)&&!c.method&&!rz?'on':''}" style="grid-column:1/3">No pagó / no estaba</button></div>
+  ${mixOpen===c.id?mixPanel(c):''}${rechOpen===c.id?rechPanel(c):''}`;
 }
 function mixPanel(c){
-  const r = c.rech || {tipo:'ninguno',monto:0,motivo:''};
-  const tipo = r.tipo || 'ninguno';
-  return `<div class="mut" style="margin:10px 0 4px">Rechazado</div>
-    <div class="seg">${[['ninguno','Nada'],['parcial','Parcial'],['total','Total']].map(([k,l])=>
-      `<button class="${tipo===k?'on':''}" data-a="rech" data-k="${k}" data-id="${c.id}">${l}</button>`).join('')}</div>
-    ${tipo==='parcial'?`<input data-f="rmonto" data-id="${c.id}" inputmode="decimal" value="${fmtInput(r.monto)}" placeholder="Monto rechazado $" style="margin-top:8px;text-align:right">`:''}
-    ${tipo!=='ninguno'?`<input data-f="rmotivo" data-id="${c.id}" list="motivos" value="${esc(r.motivo||'')}" placeholder="Motivo (ej: cerrado, producto dañado)" style="margin-top:8px">`:''}
-    ${tipo==='total'?'<div class="mut" style="margin-top:8px">Se rechaza todo el pedido: no hay nada para cobrar.</div>':`
-    <div class="mut" style="margin:10px 0 4px">Cómo paga lo que queda</div>
+  return `<div class="mut" style="margin:10px 0 4px">Cómo paga${c.rech&&rechMonto(c)>0?' lo que queda':''}</div>
     <div class="mix">${METHODS.filter(m=>m[0]!=='mix').map(([k,l])=>
       `<div><label>${l}</label><input data-f="mix" data-k="${k}" data-id="${c.id}" inputmode="decimal" value="${fmtInput(c.pay[k])}" placeholder="0"></div>`).join('')}</div>
-    <div class="mut" id="mixrest-${c.id}">${restTxt(debe(c)-sum(c))}</div>`}`;
+    <div class="mut" id="mixrest-${c.id}">${restTxt(debe(c)-sum(c))}</div>`;
+}
+function rechPanel(c){
+  const r = c.rech || {tipo:'parcial',monto:0,motivo:''};
+  return `<div class="mut" style="margin:10px 0 4px">Pedido rechazado</div>
+    <div class="seg">${[['parcial','Parcial'],['total','Total']].map(([k,l])=>
+      `<button class="${r.tipo===k?'on':''}" data-a="rech" data-k="${k}" data-id="${c.id}">${l}</button>`).join('')}</div>
+    ${r.tipo==='parcial'?`<input data-f="rmonto" data-id="${c.id}" inputmode="decimal" value="${fmtInput(r.monto)}" placeholder="Monto rechazado $" style="margin-top:8px;text-align:right">`:''}
+    <input data-f="rmotivo" data-id="${c.id}" list="motivos" value="${esc(r.motivo||'')}" placeholder="Motivo (ej: cerrado, producto dañado)" style="margin-top:8px">
+    <div class="mut" style="margin-top:8px">${r.tipo==='total'?'Se rechaza todo el pedido: no hay nada para cobrar.':'Después elegí arriba cómo paga lo que queda.'}</div>
+    <div class="row" style="margin-top:10px"><button class="btn sec" data-a="rech" data-k="ninguno" data-id="${c.id}">Quitar rechazo</button><button class="btn" data-a="rechok" data-id="${c.id}">Listo ✔</button></div>`;
 }
 const restTxt = r => Math.abs(r)<0.005?'Completo ✔': r>0?`Falta asignar ${money(r)}`:`Te pasaste ${money(-r)}`;
 
@@ -541,9 +547,11 @@ function vResumen(){
 }
 
 /* ---------- Acciones ---------- */
+// si ya tenía un único medio de pago, lo ajusta a lo que realmente hay que cobrar
+function resync(c){ if(c.method && c.method!=='mix' && c.method!=='rech' && c.pay[c.method]!==undefined) c.pay={[c.method]:debe(c)}; }
 function setPay(c, k){
-  if(k==='mix'){ c.method='mix'; c.done=true; mixOpen=c.id; return; }
-  c.method=k; c.done=true; c.pay={[k]:c.total}; c.rech=null; mixOpen=null;
+  if(k==='mix'){ c.method='mix'; c.done=true; mixOpen=c.id; rechOpen=null; return; }
+  c.method=k; c.done=true; c.pay={[k]:debe(c)}; mixOpen=null; rechOpen=null;
 }
 
 document.addEventListener('click', e=>{
@@ -559,8 +567,8 @@ document.addEventListener('click', e=>{
   }
   const nav = e.target.closest('nav button[data-t]');
   if(nav){ S.tab=nav.dataset.t; mixOpen=null; ordering=null; editId=null; return render(); }
-  if(e.target.id==='cfgbtn'){ S.tab='config'; mixOpen=null; sel=null; render(); return; }
-  if(e.target.id==='histbtn'){ S.tab='historial'; mixOpen=null; sel=null; loadHist(); return; }
+  if(e.target.id==='cfgbtn'){ S.tab='config'; mixOpen=null; rechOpen=null; sel=null; render(); return; }
+  if(e.target.id==='histbtn'){ S.tab='historial'; mixOpen=null; rechOpen=null; sel=null; loadHist(); return; }
   if(e.target.id==='bkpbtn'){ descargarRespaldo(true); return; }
   if(e.target.id==='rstbtn'){ $('#respfile').click(); return; }
   if(e.target.id==='reset'){
@@ -614,15 +622,17 @@ document.addEventListener('click', e=>{
       break;
     case 'ordend': a_finishOrder(); break;
     case 'go': S.tab='recorrido'; break;
-    case 'sel': sel = sel===id ? null : id; mixOpen = (sel===id && c.method==='mix') ? id : null; break;
+    case 'sel': sel = sel===id ? null : id; mixOpen = (sel===id && c.method==='mix') ? id : null; rechOpen = (sel===id && c.rech && rechMonto(c)>0) ? id : null; break;
     case 'pay': setPay(c, el.dataset.k); sel = el.dataset.k==='mix' ? id : null; break;
-    case 'nopay': sel=null; c.method=null; c.pay={}; c.rech=null; c.done=true; mixOpen=null; break;
+    case 'rechopen': rechOpen = rechOpen===id ? null : id; if(rechOpen===id) mixOpen=null; if(!c.rech) c.rech={tipo:'parcial',monto:0,motivo:''}; break;
+    case 'nopay': sel=null; c.method=null; c.pay={}; c.rech=null; c.done=true; mixOpen=null; rechOpen=null; break;
     case 'rech': {
       const k = el.dataset.k, prev = c.rech || {};
-      if(k==='ninguno') c.rech = null;
-      else if(k==='total'){ c.rech = {tipo:'total', monto:c.total, motivo:prev.motivo||''}; c.pay = {}; }
-      else c.rech = {tipo:'parcial', monto:prev.tipo==='parcial'?prev.monto:0, motivo:prev.motivo||''};
-      c.method='mix'; c.done=true; mixOpen=c.id; break; }
+      if(k==='ninguno'){ c.rech=null; if(c.method==='rech') c.method=null; rechOpen=null; resync(c); }
+      else if(k==='total'){ c.rech={tipo:'total', monto:c.total, motivo:prev.motivo||''}; c.pay={}; c.method='rech'; c.done=true; rechOpen=id; mixOpen=null; }
+      else { c.rech={tipo:'parcial', monto:prev.tipo==='parcial'?prev.monto:0, motivo:prev.motivo||''}; if(c.method==='rech') c.method=null; c.done=true; rechOpen=id; resync(c); }
+      break; }
+    case 'rechok': if(c.rech && c.rech.tipo==='parcial' && !(c.rech.monto>0)) c.rech=null; rechOpen=null; if(c.rech && c.rech.tipo==='total') sel=null; break;
     case 'mixok': mixOpen=null; sel=null; break;
     case 'skip': S.clients.splice(i,1); S.clients.push(c); break;
     case 'edit': mixOpen = mixOpen===id ? null : id; break;
@@ -660,10 +670,10 @@ document.addEventListener('input', e=>{
   if(f==='prname'||f==='praddr'||f==='prtot'){ photoRows[+e.target.dataset.i][f==='prname'?'name':f==='praddr'?'addr':'total']=e.target.value; return; }
   const c = get(e.target.dataset.id); if(!c) return;
   if(f==='total'){ c.total = num(e.target.value); if(c.rech && c.rech.tipo==='total') c.rech.monto = c.total;
-    if(c.method && c.method!=='mix') c.pay={[c.method]:c.total}; save(); }
+    resync(c); save(); }
   if(f==='mix'){ c.pay[e.target.dataset.k] = num(e.target.value);
     const r=$('#mixrest-'+c.id); if(r) r.textContent = restTxt(debe(c)-sum(c)); save(); }
-  if(f==='rmonto'){ if(c.rech) c.rech.monto = num(e.target.value); const r=$('#mixrest-'+c.id); if(r) r.textContent = restTxt(debe(c)-sum(c)); save(); }
+  if(f==='rmonto'){ if(c.rech){ c.rech.monto = num(e.target.value); resync(c); } const r=$('#mixrest-'+c.id); if(r) r.textContent = restTxt(debe(c)-sum(c)); save(); }
   if(f==='rmotivo'){ if(c.rech) c.rech.motivo = e.target.value; save(); }
 });
 
