@@ -421,20 +421,8 @@ function totals(){
   });
   return t;
 }
-function buildReporte(){
-  const t = totals(), c = S.clients;
-  const cobrado = t.ef+t.tr+t.ch+t.ec;
-  const hoy = new Date().toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'});
-  const medios = x => KEYS.filter(k=>(x.pay[k]||0)>0).map(k=>`${LABEL[k]} ${money(x.pay[k])}`).join(' · ');
-  const estado = x => {
-    if(!x.done) return 'Sin visitar';
-    const rest = debe(x) - sum(x);
-    const m = medios(x);
-    const rz = x.rech && rechMonto(x)>0 ? `Rechazado ${x.rech.tipo==='total'?'total':'parcial'} ${money(rechMonto(x))}${x.rech.motivo?' ('+x.rech.motivo+')':''}` : '';
-    return [m, rz, rest>0.005 ? `Sin cobrar ${money(rest)}` : '', !m && !rz && rest<=0.005 ? '—' : ''].filter(Boolean).join(' · ') || 'No pagó';
-  };
-  const rechazados = c.filter(x=>x.rech && rechMonto(x)>0);
-  const fila = (a,b) => `<tr><td>${a}</td><td class="r">${money(b)}</td></tr>`;
+function pendientesHTML(){
+  const c = S.clients;
   // pendientes separados por tipo; un cliente puede estar en más de un grupo (cada uno con su monto)
   const g = {fi:[],cc:[],sin:[],nv:[]};
   c.forEach(x=>{
@@ -450,6 +438,39 @@ function buildReporte(){
     `<table class="pend"><tr><th>Cliente</th><th>Dirección</th><th>Detalle</th><th class="r">A cobrar</th></tr>
     ${arr.map(o=>`<tr><td>${esc(o.x.name)}</td><td>${esc(o.x.addr||'')}</td><td>${esc(o.det||'')}</td><td class="r">${money(o.monto)}</td></tr>`).join('')}
     <tr class="tot"><td colspan="3">Subtotal</td><td class="r">${money(arr.reduce((a,o)=>a+o.monto,0))}</td></tr></table>` : '<div>—</div>');
+  return `<h2>Pendientes a cobrar</h2>
+  ${grupo('Firmado',g.fi)}${grupo('Cuenta corriente',g.cc)}${grupo('Visitados que no pagaron / sin cobrar',g.sin)}${grupo('Sin visitar',g.nv)}
+  <table><tr class="tot"><td>Total pendiente a cobrar</td><td class="r">${money(totPend)}</td></tr></table>`;
+}
+function buildPendientes(){
+  const hoy = new Date().toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'});
+  return `<h1>Reparto Nestle</h1>
+  <div>Pendientes a cobrar · Fecha: ${hoy}${USERNAME?' · Usuario: '+esc(USERNAME):''} · Visitados ${S.clients.filter(x=>x.done).length} de ${S.clients.length}</div>
+  ${pendientesHTML()}`;
+}
+function imprimir(html, nombre){
+  $('#reporte').innerHTML = html;
+  const prev = document.title;
+  document.title = nombre + ' ' + new Date().toISOString().slice(0,10);   // nombre sugerido del archivo
+  window.addEventListener('afterprint', ()=>{ document.title = prev; }, {once:true});
+  window.print();
+}
+function exportarPendientes(){ imprimir(buildPendientes(), 'Reparto Nestle pendientes'); }
+function buildReporte(){
+  const t = totals(), c = S.clients;
+  const cobrado = t.ef+t.tr+t.ch+t.ec;
+  const hoy = new Date().toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'});
+  const medios = x => KEYS.filter(k=>(x.pay[k]||0)>0).map(k=>`${LABEL[k]} ${money(x.pay[k])}`).join(' · ');
+  const estado = x => {
+    if(!x.done) return 'Sin visitar';
+    const rest = debe(x) - sum(x);
+    const m = medios(x);
+    const rz = x.rech && rechMonto(x)>0 ? `Rechazado ${x.rech.tipo==='total'?'total':'parcial'} ${money(rechMonto(x))}${x.rech.motivo?' ('+x.rech.motivo+')':''}` : '';
+    return [m, rz, rest>0.005 ? `Sin cobrar ${money(rest)}` : '', !m && !rz && rest<=0.005 ? '—' : ''].filter(Boolean).join(' · ') || 'No pagó';
+  };
+  const rechazados = c.filter(x=>x.rech && rechMonto(x)>0);
+  const fila = (a,b) => `<tr><td>${a}</td><td class="r">${money(b)}</td></tr>`;
+  const pendHTML = pendientesHTML();
   return `<h1>Reparto Nestle</h1>
   <div>Fecha: ${hoy}${USERNAME?' · Usuario: '+esc(USERNAME):''} · Visitados ${c.filter(x=>x.done).length} de ${c.length}</div>
   <h2>Pedidos</h2>
@@ -468,9 +489,7 @@ function buildReporte(){
   <table><tr><th>Cliente</th><th>Tipo y motivo</th><th class="r">Monto</th></tr>
     ${rechazados.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.rech.tipo==='total'?'Total':'Parcial'}${x.rech.motivo?' · '+esc(x.rech.motivo):''}</td><td class="r">${money(rechMonto(x))}</td></tr>`).join('')}
     <tr class="tot"><td colspan="2">Total rechazado</td><td class="r">${money(t.rechT+t.rechP)}</td></tr></table>`:''}
-  <h2>Pendientes a cobrar</h2>
-  ${grupo('Firmado',g.fi)}${grupo('Cuenta corriente',g.cc)}${grupo('Visitados que no pagaron / sin cobrar',g.sin)}${grupo('Sin visitar',g.nv)}
-  <table><tr class="tot"><td>Total pendiente a cobrar</td><td class="r">${money(totPend)}</td></tr></table>`;
+  ${pendHTML}`;
 }
 /* ---------- Respaldo en archivo ---------- */
 let avisoTimer = null;
@@ -513,13 +532,7 @@ document.addEventListener('change', e=>{
   }).catch(()=>alert('No se pudo leer el archivo.'));
 });
 
-function exportarPDF(){
-  $('#reporte').innerHTML = buildReporte();
-  const prev = document.title;
-  document.title = 'Reparto Nestle ' + new Date().toISOString().slice(0,10);   // nombre sugerido del archivo
-  window.addEventListener('afterprint', ()=>{ document.title = prev; }, {once:true});
-  window.print();
-}
+function exportarPDF(){ imprimir(buildReporte(), 'Reparto Nestle'); }
 function vResumen(){
   if(!S.clients.length) return '<div class="card">No hay datos todavía.</div>';
   const t = totals();
@@ -528,6 +541,7 @@ function vResumen(){
   const rechazados = S.clients.filter(c=>c.rech && rechMonto(c)>0);
   return `
   <div class="card"><button class="btn" style="width:100%;margin-bottom:12px" data-a="pdf">Exportar a PDF</button>
+    <button class="btn sec" style="width:100%;margin-bottom:12px" data-a="pdfpend">Descargar solo los pendientes (PDF)</button>
     <h2>Pedidos</h2>
     <table class="tbl">
       <tr><td><b>Total de todos los pedidos</b></td><td>${money(t.total)}</td></tr>
@@ -654,6 +668,7 @@ document.addEventListener('click', e=>{
     case 'edit': mixOpen = mixOpen===id ? null : id; break;
     case 'tosum': S.tab='resumen'; break;
     case 'pdf': exportarPDF(); return;
+    case 'pdfpend': exportarPendientes(); return;
   }
   render();
 });
