@@ -270,7 +270,7 @@ function addClient(name, total, addr){
 
 /* ---------- Render ---------- */
 // Aviso que se muestra una sola vez por dispositivo (se cierra y no vuelve a aparecer).
-const AVISO = { id:'aviso-1', texto:'Deja de romper los huevos, Capurrin' };
+const AVISO = { id:'aviso-1', texto:'Deja de romper los huevos, Kevin' };
 let avisoCerrado = false;
 try{ avisoCerrado = !!localStorage.getItem('reparto-aviso-'+AVISO.id); }catch(e){}
 function mostrarAviso(){
