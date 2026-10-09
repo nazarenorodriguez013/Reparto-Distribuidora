@@ -108,6 +108,11 @@ header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
 <body>
 <header><span>🚚 Reparto Nestle<small id="whoami" style="display:block;font-size:13px;font-weight:500;opacity:.85"></small></span><button id="menubtn" aria-label="Menú">☰</button></header>
 <datalist id="motivos"></datalist>
+<div id="aviso" style="display:none;position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:24px">
+  <div style="background:var(--card);border-radius:20px;padding:24px;max-width:340px;width:100%;text-align:center">
+    <div id="avisotxt" class="big" style="margin-bottom:18px"></div>
+    <button class="btn" id="avisook" style="width:100%">Cerrar</button>
+  </div></div>
 <div id="reporte"></div>
 <input type="file" id="respfile" accept=".json,application/json" hidden>
 <div id="menu"><button id="histbtn">Historial</button><button id="cfgbtn">Configuración</button><button id="reset">Nueva planilla</button><button id="bkpbtn">Descargar respaldo</button><button id="rstbtn">Cargar respaldo</button><button id="logout">Salir</button></div>
@@ -264,11 +269,20 @@ function addClient(name, total, addr){
 }
 
 /* ---------- Render ---------- */
+// Aviso que se muestra una sola vez por dispositivo (se cierra y no vuelve a aparecer).
+const AVISO = { id:'aviso-1', texto:'Deja de romper los huevos, Capurrin' };
+let avisoCerrado = false;
+try{ avisoCerrado = !!localStorage.getItem('reparto-aviso-'+AVISO.id); }catch(e){}
+function mostrarAviso(){
+  if(avisoCerrado) return;
+  $('#avisotxt').textContent = AVISO.texto; $('#aviso').style.display = 'flex';
+}
 function render(){
   const logged = !!TOKEN;
   document.querySelector('nav').style.display = $('#navfoto').style.display = document.querySelector('header').style.display = logged ? '' : 'none';
   $('#menu').classList.remove('open');
   document.body.classList.toggle('login', !logged);
+  if(logged) mostrarAviso();
   $('#whoami').textContent = USERNAME ? 'Usuario: ' + USERNAME.charAt(0).toUpperCase() + USERNAME.slice(1) : '';
   if(!logged){ $('#app').innerHTML = vLogin(); return; }
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on', b.dataset.t===S.tab));
@@ -586,6 +600,7 @@ function setPay(c, k){
 
 document.addEventListener('click', e=>{
   if(lpFired){ lpFired=false; return; }
+  if(e.target.id==='avisook'){ avisoCerrado = true; $('#aviso').style.display='none'; try{ localStorage.setItem('reparto-aviso-'+AVISO.id,'1'); }catch(_){} return; }
   if(e.target.id==='menubtn'){ $('#menu').classList.toggle('open'); return; }
   if(!e.target.closest('#menu')) $('#menu').classList.remove('open'); else if(e.target.id!=='reset') $('#menu').classList.remove('open');
   if(e.target.id==='logout') return logout();
