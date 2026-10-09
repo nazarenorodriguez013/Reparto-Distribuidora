@@ -91,6 +91,7 @@ header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
   #reporte th,#reporte td{border-bottom:1px solid #bbb;padding:4px 5px;text-align:left;vertical-align:top}
   #reporte th{background:#eee}
   #reporte h3{font-size:13px;margin:12px 0 4px}
+  #reporte .nueva-hoja{break-before:page;page-break-before:always;margin-top:0}
   #reporte table.pend{table-layout:fixed}
   #reporte table.pend th:nth-child(1),#reporte table.pend td:nth-child(1){width:27%}
   #reporte table.pend th:nth-child(2),#reporte table.pend td:nth-child(2){width:23%}
@@ -468,7 +469,7 @@ function buildReporte(){
   <table><tr><th>Cliente</th><th>Tipo y motivo</th><th class="r">Monto</th></tr>
     ${rechazados.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.rech.tipo==='total'?'Total':'Parcial'}${x.rech.motivo?' · '+esc(x.rech.motivo):''}</td><td class="r">${money(rechMonto(x))}</td></tr>`).join('')}
     <tr class="tot"><td colspan="2">Total rechazado</td><td class="r">${money(t.rechT+t.rechP)}</td></tr></table>`:''}
-  <h2>Pendientes a cobrar</h2>
+  <h2 class="nueva-hoja">Pendientes a cobrar</h2>
   ${grupo('Firmado',g.fi)}${grupo('Cuenta corriente',g.cc)}${grupo('Visitados que no pagaron / sin cobrar',g.sin)}${grupo('Sin visitar',g.nv)}
   <table><tr class="tot"><td>Total pendiente a cobrar</td><td class="r">${money(totPend)}</td></tr></table>`;
 }
