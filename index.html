@@ -90,6 +90,11 @@ header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
   #reporte table{width:100%;border-collapse:collapse}
   #reporte th,#reporte td{border-bottom:1px solid #bbb;padding:4px 5px;text-align:left;vertical-align:top}
   #reporte th{background:#eee}
+  #reporte h3{font-size:13px;margin:12px 0 4px}
+  #reporte table.pend{table-layout:fixed}
+  #reporte table.pend th:nth-child(1),#reporte table.pend td:nth-child(1){width:27%}
+  #reporte table.pend th:nth-child(2),#reporte table.pend td:nth-child(2){width:23%}
+  #reporte table.pend th:nth-child(4),#reporte table.pend td:nth-child(4){width:20%}
   #reporte td.r,#reporte th.r{text-align:right;white-space:nowrap}
   #reporte tr{page-break-inside:avoid}
   #reporte .tot td{font-weight:700;border-top:2px solid #000}
@@ -428,9 +433,23 @@ function buildReporte(){
     const rz = x.rech && rechMonto(x)>0 ? `Rechazado ${x.rech.tipo==='total'?'total':'parcial'} ${money(rechMonto(x))}${x.rech.motivo?' ('+x.rech.motivo+')':''}` : '';
     return [m, rz, rest>0.005 ? `Sin cobrar ${money(rest)}` : '', !m && !rz && rest<=0.005 ? '—' : ''].filter(Boolean).join(' · ') || 'No pagó';
   };
-  const pend = c.filter(x=>debe(x) - sum(x) > 0.005 || (x.pay.cc||0)>0 || (x.pay.fi||0)>0);
   const rechazados = c.filter(x=>x.rech && rechMonto(x)>0);
   const fila = (a,b) => `<tr><td>${a}</td><td class="r">${money(b)}</td></tr>`;
+  // pendientes separados por tipo; un cliente puede estar en más de un grupo (cada uno con su monto)
+  const g = {fi:[],cc:[],sin:[],nv:[]};
+  c.forEach(x=>{
+    const rest = Math.max(0, debe(x) - sum(x));
+    const rz = rechMonto(x)>0 ? `Pedido ${money(x.total)} · rechazado ${money(rechMonto(x))}` : '';
+    if(!x.done){ if(debe(x)>0.005) g.nv.push({x, monto:debe(x), det:rz||'No se visitó'}); return; }
+    if((x.pay.fi||0)>0) g.fi.push({x, monto:x.pay.fi, det:rz});
+    if((x.pay.cc||0)>0) g.cc.push({x, monto:x.pay.cc, det:rz});
+    if(rest>0.005) g.sin.push({x, monto:rest, det:rz||'Visitado, no pagó'});
+  });
+  const totPend = [...g.fi,...g.cc,...g.sin,...g.nv].reduce((a,o)=>a+o.monto,0);
+  const grupo = (titulo, arr) => `<h3>${titulo} (${arr.length})</h3>` + (arr.length ?
+    `<table class="pend"><tr><th>Cliente</th><th>Dirección</th><th>Detalle</th><th class="r">A cobrar</th></tr>
+    ${arr.map(o=>`<tr><td>${esc(o.x.name)}</td><td>${esc(o.x.addr||'')}</td><td>${esc(o.det||'')}</td><td class="r">${money(o.monto)}</td></tr>`).join('')}
+    <tr class="tot"><td colspan="3">Subtotal</td><td class="r">${money(arr.reduce((a,o)=>a+o.monto,0))}</td></tr></table>` : '<div>—</div>');
   return `<h1>Reparto Nestle</h1>
   <div>Fecha: ${hoy}${USERNAME?' · Usuario: '+esc(USERNAME):''} · Visitados ${c.filter(x=>x.done).length} de ${c.length}</div>
   <h2>Pedidos</h2>
@@ -449,12 +468,9 @@ function buildReporte(){
   <table><tr><th>Cliente</th><th>Tipo y motivo</th><th class="r">Monto</th></tr>
     ${rechazados.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.rech.tipo==='total'?'Total':'Parcial'}${x.rech.motivo?' · '+esc(x.rech.motivo):''}</td><td class="r">${money(rechMonto(x))}</td></tr>`).join('')}
     <tr class="tot"><td colspan="2">Total rechazado</td><td class="r">${money(t.rechT+t.rechP)}</td></tr></table>`:''}
-  <h2>Clientes pendientes a cobrar (${pend.length})</h2>
-  ${pend.length?`<table><tr><th>Cliente</th><th>Detalle</th><th class="r">Pendiente</th></tr>
-    ${pend.map(x=>{ const rest=Math.max(0,debe(x)-sum(x)), cc=x.pay.cc||0, fi=x.pay.fi||0;
-      const det=[!x.done?'Sin visitar':'', cc>0?'Cta cte '+money(cc):'', fi>0?'Firmado '+money(fi):'', rest>0.005?'Sin cobrar '+money(rest):''].filter(Boolean).join(' · ');
-      return `<tr><td>${esc(x.name)}</td><td>${det}</td><td class="r">${money(cc+fi+rest)}</td></tr>`; }).join('')}
-    <tr class="tot"><td colspan="2">Total pendiente</td><td class="r">${money(t.cc+t.fi+t.sin)}</td></tr></table>`:'<div>Nada pendiente.</div>'}`;
+  <h2>Pendientes a cobrar</h2>
+  ${grupo('Firmado',g.fi)}${grupo('Cuenta corriente',g.cc)}${grupo('Visitados que no pagaron / sin cobrar',g.sin)}${grupo('Sin visitar',g.nv)}
+  <table><tr class="tot"><td>Total pendiente a cobrar</td><td class="r">${money(totPend)}</td></tr></table>`;
 }
 /* ---------- Respaldo en archivo ---------- */
 let avisoTimer = null;
