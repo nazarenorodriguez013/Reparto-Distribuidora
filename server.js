@@ -91,6 +91,8 @@ function ipCliente(req) {
   const xs = String(req.headers['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean);
   return HOPS > 0 && xs.length ? xs[Math.max(0, xs.length - HOPS)] : (req.socket.remoteAddress || '');
 }
+// Si el proxy no deja ver la IP real (llega una dirección privada), no se limita por IP: así no se bloquea a todos juntos.
+const esPrivada = ip => /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|::1$|f[cd][0-9a-f]{2}:|::ffff:(10\.|127\.|192\.168\.))/i.test(ip) || !ip;
 const VENTANA = 10 * 60 * 1000;
 const porIp = new Map(), porUsuario = new Map();   // intentos de login fallidos
 function recientes(m, k) { const t = (m.get(k) || []).filter(x => Date.now() - x < VENTANA); if (t.length) m.set(k, t); else m.delete(k); return t; }
@@ -131,7 +133,7 @@ async function login(req, res) {
   const b = await body(req, 1e4);
   const nombre = typeof b.user === 'string' ? b.user.trim() : '', pass = typeof b.pass === 'string' ? b.pass : '';
   const ip = ipCliente(req), clave = nombre.toLowerCase();
-  if (recientes(porIp, ip).length >= 20) return send(res, 429, { error: 'Demasiados intentos. Probá de nuevo en unos minutos.' });
+  if (!esPrivada(ip) && recientes(porIp, ip).length >= 20) return send(res, 429, { error: 'Demasiados intentos. Probá de nuevo en unos minutos.' });
   const previos = recientes(porUsuario, clave).length;
   if (previos > 3) await dormir(Math.min(5000, (previos - 3) * 500));   // frena la fuerza bruta sin dejar a nadie afuera
   if (dbReady) await dbReady;
@@ -147,7 +149,7 @@ async function login(req, res) {
   if (modo === 'env') { ok = hash === null && same(pass, PASS); await checkPass(pass, hashFalso || 'x:x'); if (ok) u = ENV_USER; }
   else ok = await checkPass(pass, hash) && !!u;   // siempre se calcula el hash: el tiempo no revela si el usuario existe
   if (!ok) {
-    for (const [m, k] of [[porIp, ip], [porUsuario, clave]]) { const t = m.get(k) || []; t.push(Date.now()); m.set(k, t); }
+    for (const [m, k] of [[porIp, ip], [porUsuario, clave]]) { if (m === porIp && esPrivada(ip)) continue; const t = m.get(k) || []; t.push(Date.now()); m.set(k, t); }
     return send(res, 401, { error: 'Usuario o contraseña incorrectos' });
   }
   porUsuario.delete(clave);

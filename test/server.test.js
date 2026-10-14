@@ -64,6 +64,16 @@ test('límite de intentos: no se evita inventando X-Forwarded-For', async () => 
   } finally { await sv.parar(); }
 });
 
+test('si el proxy no muestra la IP real (dirección privada) no se bloquea a todos juntos', async () => {
+  const sv = await arrancar({ APP_USER: 'admin', APP_PASS: 'clave-de-prueba' });
+  try {
+    let bloqueos = 0;
+    for (let i = 0; i < 26; i++) { const [s] = await sv.llamar('POST', '/api/login', { user: 'u' + i, pass: 'mala' }); if (s === 429) bloqueos++; }   // llegan desde 127.0.0.1
+    assert.equal(bloqueos, 0);
+    assert.equal((await sv.llamar('POST', '/api/login', { user: 'admin', pass: 'clave-de-prueba' }))[0], 200, 'el usuario legítimo puede entrar');
+  } finally { await sv.parar(); }
+});
+
 test('con base de datos', { skip: !DB && 'definí TEST_DATABASE_URL para correr estas pruebas' }, async (t) => {
   const { Pool } = require('pg');
   const pool = new Pool({ connectionString: DB });
