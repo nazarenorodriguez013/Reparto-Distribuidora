@@ -230,6 +230,49 @@ function applyColor(c){
   try{ localStorage.setItem('reparto-color', c); }catch(e){}
 }
 applyColor(COLOR);
+/* ---------- Cuenta y usuarios (Configuración) ---------- */
+let cfg = {yo:null, usuarios:null, msg:'', err:''};
+async function loadCfg(){
+  cfg.msg = ''; cfg.err = '';
+  try{
+    cfg.yo = await api('GET','/api/yo');
+    cfg.usuarios = (cfg.yo.admin && cfg.yo.gestion) ? (await api('GET','/api/usuarios')).usuarios : null;
+  }catch(e){ if(e.status!==401) cfg.err = 'No se pudo cargar la cuenta.'; }
+  if(S.tab==='config') render();
+}
+async function loadCfgLista(){ cfg.usuarios = (await api('GET','/api/usuarios')).usuarios; }
+function setSesion(token, nombre){
+  TOKEN = token; USERNAME = nombre;
+  try{ localStorage.setItem('reparto-token', TOKEN); localStorage.setItem('reparto-user', USERNAME); }catch(e){}
+}
+async function cfgRun(fn, ok){
+  cfg.msg = ''; cfg.err = '';
+  try{ await fn(); cfg.msg = ok; }catch(e){ if(e.status===401) return; cfg.err = e.message || 'Error'; }
+  if(S.tab==='config') render();
+}
+function cfgCuentas(){
+  const aviso = (cfg.msg?`<div class="hint" style="background:#dcfce7;color:#14532d">${esc(cfg.msg)}</div>`:'') + (cfg.err?`<div class="hint" style="background:#fee2e2;color:#7f1d1d">${esc(cfg.err)}</div>`:'');
+  if(!cfg.yo) return `<div class="card">${aviso||'Cargando cuenta…'}</div>`;
+  if(!cfg.yo.gestion) return `<div class="card"><h2>Mi cuenta</h2><div class="mut">Cambiar el nombre de usuario y la contraseña, y agregar usuarios, estará disponible cuando la base de datos esté conectada.</div></div>`;
+  return `<div class="card"><h2>Mi cuenta</h2>${aviso}
+    <label class="mut">Nombre de usuario</label>
+    <div class="row"><input id="c_nombre" autocapitalize="none" value="${esc(cfg.yo.nombre)}"><button class="btn fit" data-a="cfg-nombre">Guardar</button></div>
+    <h2 style="margin-top:16px">Cambiar contraseña</h2>
+    <input id="c_pa" type="password" autocomplete="current-password" placeholder="Contraseña actual">
+    <input id="c_pn" type="password" autocomplete="new-password" placeholder="Contraseña nueva (mínimo 6)" style="margin-top:8px">
+    <input id="c_pn2" type="password" autocomplete="new-password" placeholder="Repetir contraseña nueva" style="margin-top:8px">
+    <div class="row" style="margin-top:10px"><button class="btn" data-a="cfg-pass">Cambiar contraseña</button></div>
+  </div>
+  ${cfg.yo.admin && cfg.usuarios ? `<div class="card"><h2>Usuarios (${cfg.usuarios.length})</h2>
+    ${cfg.usuarios.map(u=>`<div class="item" style="flex-wrap:wrap"><div class="nm"><b>${esc(u.nombre)}</b></div>${u.admin?'<span class="tag ok">Admin</span>':''}
+      <button class="btn sec sm" style="padding:0 10px" data-a="cfg-reset" data-id="${u.id}" data-n="${esc(u.nombre)}">Contraseña</button>
+      ${u.id===cfg.yo.id?'':`<button class="btn sec sm" data-a="cfg-del" data-id="${u.id}" data-n="${esc(u.nombre)}">✕</button>`}</div>`).join('')}
+    <h2 style="margin-top:16px">Agregar usuario</h2>
+    <input id="c_un" autocapitalize="none" placeholder="Nombre de usuario">
+    <input id="c_up" type="password" autocomplete="new-password" placeholder="Contraseña (mínimo 6)" style="margin-top:8px">
+    <div class="row" style="margin-top:10px"><button class="btn" data-a="cfg-add">Agregar usuario</button></div>
+  </div>`:''}`;
+}
 function vConfig(){
   const cur = (COLOR||COLORS[0]).toLowerCase();
   return `<div class="card"><h2>Color de la app</h2>
@@ -237,7 +280,7 @@ function vConfig(){
     <h2>Otro color</h2>
     <input type="color" id="colorpick" value="${cur}" style="height:56px;padding:4px">
     <div class="row" style="margin-top:14px"><button class="btn sec" data-a="color" data-c="${COLORS[0]}">Volver al original</button></div>
-  </div>`;
+  </div>${cfgCuentas()}`;
 }
 function vHistorial(){
   if(hist===null) return '<div class="card">Cargando…</div>';
@@ -593,7 +636,7 @@ document.addEventListener('click', e=>{
   }
   const nav = e.target.closest('nav button[data-t]');
   if(nav){ S.tab=nav.dataset.t; mixOpen=null; ordering=null; editId=null; return render(); }
-  if(e.target.id==='cfgbtn'){ S.tab='config'; mixOpen=null; rechOpen=null; sel=null; render(); return; }
+  if(e.target.id==='cfgbtn'){ S.tab='config'; mixOpen=null; rechOpen=null; sel=null; render(); loadCfg(); return; }
   if(e.target.id==='histbtn'){ S.tab='historial'; mixOpen=null; rechOpen=null; sel=null; loadHist(); return; }
   if(e.target.id==='reset'){
     const sinGuardar = S.clients.length && (!S.pid || dbOff);
@@ -614,6 +657,16 @@ document.addEventListener('click', e=>{
   const i = c ? S.clients.indexOf(c) : -1;
   switch(a){
     case 'login': return doLogin();
+    case 'cfg-nombre': cfgRun(async()=>{ const d = await api('PUT','/api/yo',{nombre:$('#c_nombre').value}); setSesion(d.token, d.user.nombre); cfg.yo = {...cfg.yo, nombre:d.user.nombre}; await loadCfgLista(); }, 'Nombre de usuario actualizado.'); return;
+    case 'cfg-pass': {
+      const pn = $('#c_pn').value;
+      if(pn !== $('#c_pn2').value){ cfg.msg=''; cfg.err='Las contraseñas nuevas no coinciden.'; render(); return; }
+      cfgRun(async()=>{ const d = await api('PUT','/api/yo',{passActual:$('#c_pa').value, passNueva:pn}); setSesion(d.token, d.user.nombre); }, 'Contraseña cambiada.'); return; }
+    case 'cfg-add': cfgRun(async()=>{ await api('POST','/api/usuarios',{nombre:$('#c_un').value, pass:$('#c_up').value}); await loadCfgLista(); }, 'Usuario agregado.'); return;
+    case 'cfg-reset': { const n = prompt('Nueva contraseña para '+el.dataset.n+' (mínimo 6 caracteres):'); if(!n) return;
+      cfgRun(async()=>{ await api('PUT','/api/usuarios/'+id+'/pass',{pass:n}); }, 'Contraseña de '+el.dataset.n+' actualizada.'); return; }
+    case 'cfg-del': if(!confirm('¿Borrar el usuario '+el.dataset.n+'? Sus datos de acceso se eliminan; las planillas no se borran.')) return;
+      cfgRun(async()=>{ await api('DELETE','/api/usuarios/'+id); await loadCfgLista(); }, 'Usuario borrado.'); return;
     case 'showpass': { const i=$('#l_pass'); i.type = i.type==='password'?'text':'password'; el.textContent = i.type==='password'?'Ver':'Ocultar'; return; }
     case 'color': applyColor(el.dataset.c); break;
     case 'hist-open': api('GET','/api/planillas/'+id).then(d=>{ S.pid=d.id; S.clients=d.data.clients||[]; S.tab='planilla'; render(); }).catch(()=>setSync('No se pudo abrir la planilla.')); return;
