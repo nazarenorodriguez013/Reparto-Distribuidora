@@ -139,9 +139,14 @@ const METHODS = [
 ];
 const LABEL = Object.fromEntries(METHODS);
 const KEYS = ['ef','tr','ch','ec','cc','fi'];
-const KEY = 'reparto-v1';
+const KEY = 'reparto-v1';          // versiones anteriores guardaban la planilla acá: se sube una vez y se borra
+const OUT = 'reparto-pendiente';   // cambios que el servidor todavía no confirmó (se borra apenas los confirma)
 
-let S = load() || {photo:null, clients:[], tab:'planilla'};
+let S = {photo:null, clients:[], tab:'planilla', pid:null};
+try{ S.tab = localStorage.getItem('reparto-tab') || 'planilla'; S.pid = Number(localStorage.getItem('reparto-pid')) || null; }catch(e){}
+const LEGACY = (()=>{ try{ return JSON.parse(localStorage.getItem(KEY)); }catch(e){ return null; } })();
+let listo = false;       // ya hay una planilla cargada (del servidor, o la última del celular si no hay conexión)
+let conectado = false;   // el servidor respondió: recién ahí se envían los cambios
 let ordering = null;      // modo "ordenar tocando": array de ids ya tocados
 let TOKEN = null;
 try{ TOKEN = localStorage.getItem('reparto-token'); }catch(e){}
@@ -167,17 +172,25 @@ let photoRows = [];               // clientes leídos de la foto, por revisar
 let pedi = null;                  // fila de la foto abierta para editar
 let ocrBusy = '';
 
-function load(){ try{ return JSON.parse(localStorage.getItem(KEY)); }catch(e){ return null; } }
 function save(){
-  try{ localStorage.setItem(KEY, JSON.stringify(S)); }
-  catch(e){ try{ const p=S.photo; S.photo=null; localStorage.setItem(KEY, JSON.stringify(S)); S.photo=p; }catch(_){} }
+  try{ localStorage.setItem('reparto-tab', S.tab); if(S.pid) localStorage.setItem('reparto-pid', S.pid); else localStorage.removeItem('reparto-pid'); }catch(e){}
   scheduleSync();
 }
 
-/* ---------- Servidor (base de datos) ---------- */
-let syncTimer = null, syncing = false, syncAgain = false, dbOff = false, hist = null;
-function setSync(msg){ const el=$('#syncmsg'); el.textContent=msg; el.style.display=msg?'':'none'; }
-function scheduleSync(){ if(!TOKEN||dbOff) return; clearTimeout(syncTimer); syncTimer=setTimeout(syncSave,800); }
+/* ---------- Servidor (base de datos): es la única copia de las planillas ---------- */
+let syncTimer = null, syncing = false, syncAgain = false, hist = null, enviado = '', sinEnviar = false, cargando = false, cargaTimer = null;
+const instantanea = () => JSON.stringify([S.pid, S.clients]);
+function setSync(msg, rojo){ const el=$('#syncmsg'); el.textContent=msg; el.style.display=msg?'':'none'; el.style.background=rojo?'#fee2e2':''; el.style.color=rojo?'#7f1d1d':''; }
+function outboxGet(){ try{ return JSON.parse(localStorage.getItem(OUT)); }catch(e){ return null; } }
+function outboxClear(){ try{ localStorage.removeItem(OUT); }catch(e){} }
+// Cada cambio se anota un instante en el celular y se envía enseguida; se borra apenas el servidor lo confirma.
+function scheduleSync(){
+  if(!TOKEN || !listo || instantanea()===enviado) return;
+  sinEnviar = true;
+  try{ localStorage.setItem(OUT, JSON.stringify({pid:S.pid, clients:S.clients})); }catch(e){}
+  if(!conectado) return;
+  clearTimeout(syncTimer); syncTimer = setTimeout(syncSave, 300);
+}
 async function api(method, url, data){
   const r = await fetch(url,{method,headers:{'content-type':'application/json',authorization:'Bearer '+TOKEN},body:data?JSON.stringify(data):undefined});
   if(r.status===401){ logout(); throw Object.assign(new Error('401'),{status:401}); }
@@ -185,33 +198,74 @@ async function api(method, url, data){
   if(!r.ok) throw Object.assign(new Error(d.error||'error'),{status:r.status});
   return d;
 }
+const MSG_SIN_SENAL = '⚠ Sin conexión: los últimos cambios todavía NO están en el servidor. Se envían solos cuando vuelva la señal.';
+const MSG_SIN_BASE = '⚠ La base de datos no está conectada: los cambios NO se están guardando en el servidor.';
 async function syncSave(){
-  clearTimeout(syncTimer); syncTimer=null;
-  if(syncing){ syncAgain=true; return; }
-  syncing = true;
+  clearTimeout(syncTimer); syncTimer = null;
+  if(!TOKEN || !listo || !conectado || cargando) return;
+  if(syncing){ syncAgain = true; return; }
+  syncing = true; let ok = false;
   try{
-    if(!S.pid){
-      if(S.clients.length){ S.pid=(await api('POST','/api/planillas',{clients:S.clients})).id; try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} }
-    } else await api('PUT','/api/planillas/'+S.pid,{clients:S.clients});
-    setSync('');
+    if(!S.pid){ if(S.clients.length){ S.pid = (await api('POST','/api/planillas',{clients:S.clients})).id; save(); } }
+    else await api('PUT','/api/planillas/'+S.pid,{clients:S.clients});
+    enviado = instantanea(); ok = true;
   }catch(e){
-    if(e.status===503) dbOff=true; else if(e.status!==401) setSync('No se pudo guardar en el servidor. Revisá la conexión.');
+    if(e.status!==401){ setSync(e.status===503 ? MSG_SIN_BASE : MSG_SIN_SENAL, true); syncTimer = setTimeout(syncSave, e.status===503 ? 30000 : 5000); }
   }
   syncing = false;
-  if(syncAgain){ syncAgain=false; syncSave(); }
+  if(ok){
+    if(syncAgain){ syncAgain = false; syncSave(); }
+    else if(!syncTimer){
+      if(instantanea()===enviado){ sinEnviar = false; outboxClear(); setSync(''); } else scheduleSync();
+    }
+  } else syncAgain = false;
 }
-async function loadRemote(){
-  if(!TOKEN||dbOff) return;
-  try{
-    let d = null;
-    if(S.pid){ try{ d = await api('GET','/api/planillas/'+S.pid); }catch(e){ if(e.status!==404) throw e; S.pid=null; } }
-    if(!S.pid && !S.clients.length) d = await api('GET','/api/planillas/ultima');
-    if(d && d.id){ S.pid=d.id; S.clients=d.data.clients||[]; render(); }
-    else if(!S.pid && S.clients.length) syncSave();
-    setSync('');
-  }catch(e){
-    if(e.status===503) dbOff=true; else if(e.status!==401) setSync('Sin conexión con el servidor. Se usan los datos del celular.');
+async function asegurarEnviado(){ if(sinEnviar) await syncSave(); return !sinEnviar; }
+
+// JSON con las claves ordenadas: la base devuelve los objetos con otro orden de claves
+const canon = o => Array.isArray(o) ? '['+o.map(canon).join(',')+']' : (o && typeof o==='object') ? '{'+Object.keys(o).sort().map(k=>JSON.stringify(k)+':'+canon(o[k])).join(',')+'}' : JSON.stringify(o);
+// Sube lo que quedó sin enviar y los datos que versiones anteriores guardaron en el navegador.
+async function subirPendientes(){
+  const o = outboxGet();
+  if(o && ((o.clients||[]).length || o.pid)){
+    if(o.pid){ try{ await api('PUT','/api/planillas/'+o.pid,{clients:o.clients||[]}); }catch(e){ if(e.status!==404) throw e; if((o.clients||[]).length) await api('POST','/api/planillas',{clients:o.clients}); } }
+    else await api('POST','/api/planillas',{clients:o.clients}).then(r=>{ S.pid = r.id; });
   }
+  outboxClear();
+  if(LEGACY && Array.isArray(LEGACY.clients) && LEGACY.clients.length){
+    let subir = true;
+    if(LEGACY.pid){ try{ const d = await api('GET','/api/planillas/'+LEGACY.pid); subir = canon(d.data.clients) !== canon(LEGACY.clients); if(!subir && !S.pid) S.pid = LEGACY.pid; }catch(e){ if(e.status!==404) throw e; } }
+    if(subir){ const r = await api('POST','/api/planillas',{clients:LEGACY.clients}); if(!S.pid || !LEGACY.pid) S.pid = r.id; }
+    try{ localStorage.removeItem(KEY); }catch(e){}
+  }
+}
+async function cargarServidor(){
+  if(!TOKEN || cargando) return;
+  cargando = true; clearTimeout(cargaTimer);
+  const antes = JSON.stringify(S.clients);
+  try{
+    await subirPendientes();
+    let d = null;
+    if(S.pid){ try{ d = await api('GET','/api/planillas/'+S.pid); }catch(e){ if(e.status!==404) throw e; S.pid = null; } }
+    if(!d) d = await api('GET','/api/planillas/ultima');
+    if(listo && JSON.stringify(S.clients)!==antes){ enviado = ''; }          // se editó durante la carga: no se pisa
+    else if(d && d.id){ S.pid = d.id; S.clients = d.data.clients || []; enviado = instantanea(); }
+    else { S.pid = null; S.clients = []; enviado = instantanea(); }
+    conectado = true; listo = true; sinEnviar = false; setSync('');
+    if(enviado==='') scheduleSync();
+  }catch(e){
+    if(e.status!==401){
+      if(!listo){
+        const o = outboxGet() || LEGACY;
+        if(o && Array.isArray(o.clients)){ S.clients = o.clients; S.pid = o.pid || S.pid; listo = true; }
+        else if(e.status===503){ listo = true; }   // sin base de datos: se puede trabajar, pero avisa que no se guarda en el servidor
+      }
+      setSync(e.status===503 ? MSG_SIN_BASE : (listo ? MSG_SIN_SENAL : 'Sin conexión con el servidor. Reintentando…'), true);
+      cargaTimer = setTimeout(cargarServidor, 8000);
+    }
+  }
+  cargando = false;
+  render();
 }
 async function loadHist(){
   hist = null; render();
@@ -328,6 +382,7 @@ function render(){
   $('#whoami').textContent = USERNAME ? 'Usuario: ' + USERNAME.charAt(0).toUpperCase() + USERNAME.slice(1) : '';
   if(!logged){ $('#app').innerHTML = vLogin(); return; }
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on', b.dataset.t===S.tab));
+  if(!listo){ $('#app').innerHTML = '<div class="card">Cargando planilla…</div>'; return; }
   $('#app').innerHTML = S.tab==='planilla' ? vPlanilla() : S.tab==='recorrido' ? vRecorrido() : S.tab==='historial' ? vHistorial() : S.tab==='config' ? vConfig() : vResumen();
   save();
 }
@@ -345,7 +400,11 @@ function vLogin(){
       <button class="btn" style="margin-top:18px" data-a="login">Ingresar</button>
     </div></div>`;
 }
-function logout(){ TOKEN=null; try{ localStorage.removeItem('reparto-token'); }catch(e){} loginErr=''; render(); }
+function logout(){
+  TOKEN=null; listo=false; conectado=false; cargando=false; clearTimeout(syncTimer); clearTimeout(cargaTimer); syncTimer=null;
+  S.clients=[]; S.pid=null; enviado=''; setSync('');   // lo que quedó sin enviar sigue anotado y se sube al volver a entrar
+  try{ localStorage.removeItem('reparto-token'); }catch(e){} loginErr=''; render();
+}
 async function doLogin(){
   loginUser = $('#l_user').value.trim();
   try{
@@ -354,8 +413,8 @@ async function doLogin(){
     if(!r.ok) throw new Error(d.error||'error');
     TOKEN = d.token; loginErr=''; USERNAME = d.user || loginUser;
     try{ localStorage.setItem('reparto-user', USERNAME); }catch(e){}
-    loadRemote();
     try{ localStorage.setItem('reparto-token', TOKEN); }catch(e){}
+    cargarServidor();
   }catch(err){ loginErr = err.message==='Failed to fetch' ? 'Sin conexión' : err.message; }
   render();
 }
@@ -547,29 +606,6 @@ function buildReporte(){
     <tr class="tot"><td colspan="2">Total rechazado</td><td class="r">${money(t.rechT+t.rechP)}</td></tr></table>`:''}
   ${pendHTML}`;
 }
-/* ---------- Respaldo en archivo ---------- */
-let avisoTimer = null;
-function aviso(msg){ setSync(msg); clearTimeout(avisoTimer); avisoTimer = setTimeout(()=>setSync(''), 8000); }
-function guardarArchivo(nombre, texto){
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([texto],{type:'application/json'}));
-  a.download = nombre; document.body.appendChild(a); a.click();
-  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1500);
-}
-async function descargarRespaldo(conHistorial){
-  const ahora = new Date();
-  const datos = { app:'reparto-nestle', version:1, fecha:ahora.toISOString(), usuario:USERNAME,
-    actual:{ pid:S.pid||null, clients:S.clients }, historial:null };
-  if(conHistorial && TOKEN && !dbOff){
-    try{
-      const lista = (await api('GET','/api/planillas')).planillas;
-      datos.historial = await Promise.all(lista.map(async h=>({ id:h.id, creada:h.created_at, clients:(await api('GET','/api/planillas/'+h.id)).data.clients })));
-    }catch(e){ datos.historial = null; }
-  }
-  const nombre = `reparto-respaldo-${ahora.toISOString().slice(0,10)}-${ahora.toTimeString().slice(0,5).replace(':','')}.json`;
-  guardarArchivo(nombre, JSON.stringify(datos,null,1));
-  aviso(`Respaldo descargado: ${nombre} (${S.clients.length} clientes${datos.historial?` + ${datos.historial.length} planillas del historial`:''}). Buscalo en Descargas.`);
-}
 function exportarPDF(){ imprimir(buildReporte(), 'Reparto Nestle'); }
 function vResumen(){
   if(!S.clients.length) return '<div class="card">No hay datos todavía.</div>';
@@ -639,17 +675,12 @@ document.addEventListener('click', e=>{
   if(e.target.id==='cfgbtn'){ S.tab='config'; mixOpen=null; rechOpen=null; sel=null; render(); loadCfg(); return; }
   if(e.target.id==='histbtn'){ S.tab='historial'; mixOpen=null; rechOpen=null; sel=null; loadHist(); return; }
   if(e.target.id==='reset'){
-    const sinGuardar = S.clients.length && (!S.pid || dbOff);
-    const msg = sinGuardar
-      ? 'Esta planilla NO está guardada en el servidor y se perdería. Antes de empezar una nueva se va a descargar un respaldo en el celular. ¿Continuar?'
-      : '¿Empezar una planilla nueva? La actual queda guardada en el historial.';
-    if(confirm(msg)){
-      (async()=>{
-        if(syncTimer) await syncSave();
-        if(sinGuardar) await descargarRespaldo(false);
-        S={photo:null,clients:[],tab:'planilla'}; manual={name:'',addr:'',total:''}; photoRows=[]; pedi=null; ordering=null; mixOpen=null; render();
-      })();
-    }
+    if(!confirm('¿Empezar una planilla nueva? La actual queda guardada en el historial.')) return;
+    (async()=>{
+      if(!await asegurarEnviado()){ alert('Hay cambios que todavía no se enviaron al servidor (sin señal). Esperá a que se envíen antes de empezar una planilla nueva.'); return; }
+      S.photo=null; S.clients=[]; S.pid=null; S.tab='planilla'; manual={name:'',addr:'',total:''}; photoRows=[]; pedi=null; ordering=null; mixOpen=null;
+      enviado = instantanea(); render();
+    })();
     return;
   }
   const el = e.target.closest('[data-a]'); if(!el) return;
@@ -669,9 +700,13 @@ document.addEventListener('click', e=>{
       cfgRun(async()=>{ await api('DELETE','/api/usuarios/'+id); await loadCfgLista(); }, 'Usuario borrado.'); return;
     case 'showpass': { const i=$('#l_pass'); i.type = i.type==='password'?'text':'password'; el.textContent = i.type==='password'?'Ver':'Ocultar'; return; }
     case 'color': applyColor(el.dataset.c); break;
-    case 'hist-open': api('GET','/api/planillas/'+id).then(d=>{ S.pid=d.id; S.clients=d.data.clients||[]; S.tab='planilla'; render(); }).catch(()=>setSync('No se pudo abrir la planilla.')); return;
+    case 'hist-open': (async()=>{
+      if(!await asegurarEnviado()){ alert('Hay cambios que todavía no se enviaron al servidor (sin señal). Esperá a que se envíen.'); return; }
+      try{ const d = await api('GET','/api/planillas/'+id); S.pid=d.id; S.clients=d.data.clients||[]; S.tab='planilla'; enviado=instantanea(); render(); }
+      catch(e){ if(e.status!==401) setSync('No se pudo abrir la planilla.', true); }
+    })(); return;
     case 'hist-del': if(!confirm('¿Borrar esta planilla del historial?')) return;
-      api('DELETE','/api/planillas/'+id).then(()=>{ if(+id===S.pid){ S.pid=null; S.clients=[]; } loadHist(); }).catch(()=>setSync('No se pudo borrar.')); return;
+      api('DELETE','/api/planillas/'+id).then(()=>{ if(+id===S.pid){ S.pid=null; S.clients=[]; enviado=instantanea(); } loadHist(); }).catch(()=>setSync('No se pudo borrar.')); return;
     case 'madd': {
       if(!manual.name.trim()) return;
       const r = dedupe([manual], S.clients);
@@ -806,8 +841,9 @@ async function leerFotos(files){
 let lastRestantes = null;
 
 if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
+window.addEventListener('online', ()=>{ if(!listo || !conectado) cargarServidor(); else syncSave(); });
 render();
-loadRemote();
+if(TOKEN) cargarServidor();
 </script>
 </body>
 </html>
