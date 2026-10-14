@@ -4,7 +4,7 @@ App web para repartidores, pensada para usar desde el celular. Se carga la plani
 
 ## Qué hace
 
-- **Planilla:** carga de clientes con importe y dirección, a mano o leyendo la foto de la planilla con IA (hasta 3 fotos a la vez, desde la cámara o la galería). Los repetidos (mismo nombre e importe) se quitan solos.
+- **Planilla:** carga de clientes con importe y dirección (los importes negativos se tratan como notas de crédito), a mano o leyendo la foto de la planilla con IA (hasta 3 fotos a la vez, desde la cámara o la galería). Los repetidos (mismo nombre e importe) se quitan solos.
 - **Recorrido:** el orden se arma tocando los clientes uno por uno. Cada cliente se marca con su medio de pago: efectivo, transferencia, cheque, E-Cheq, cuenta corriente, firmado, pago mixto, o rechazado (total o parcial, con motivo). En pago mixto y rechazo parcial el importe restante se calcula solo y se puede editar.
 - **Resumen:** total de todos los pedidos, lo rechazado, lo que tiene que haber por medio de pago y los clientes pendientes de cobro (firmado, cuenta corriente, sin cobrar, sin visitar).
 - **PDF:** exporta el resumen completo, con los clientes en el orden de la planilla original, y un PDF aparte solo con los pendientes.
@@ -14,7 +14,7 @@ App web para repartidores, pensada para usar desde el celular. Se carga la plani
 
 ## Cómo guarda los datos
 
-Las planillas viven **solo en la base de datos (Postgres)**. Cada cambio se envía al servidor al instante. Si el celular se queda sin señal, los cambios sin enviar quedan anotados en el celular y se suben solos cuando vuelve la conexión; apenas el servidor los confirma, se borran del celular.
+Las planillas viven **solo en la base de datos (Postgres)**. Cada cambio se envía al servidor al instante. Si el celular se queda sin señal, los cambios sin enviar quedan anotados en el celular y se suben solos cuando vuelve la conexión; apenas el servidor los confirma, se borran del celular. Si dos celulares editan la misma planilla a la vez, el que llega segundo no pisa al otro: sus cambios quedan en una planilla nueva y se avisa.
 
 ## Tecnología
 
@@ -31,6 +31,14 @@ npm start
 
 Después abrí http://localhost:3000.
 
+## Pruebas
+
+```bash
+npm test
+```
+
+Corre las pruebas de la lógica de importes y del servidor (login, usuarios, planillas, límite de fotos). Las que necesitan base de datos se activan definiendo `TEST_DATABASE_URL` con una base de pruebas (se borran sus tablas); sin ella se omiten. También corren solas en GitHub con cada cambio.
+
 ## Límites y seguridad
 
 - La lectura de fotos tiene un tope de **3 fotos cada 10 minutos** (lo controla el servidor).
@@ -43,6 +51,8 @@ Después abrí http://localhost:3000.
 index.html      la app (pantallas, lógica y estilos)
 server.js       servidor: archivos, login, usuarios, planillas y límite de fotos
 api/leer.js     lectura de la foto de la planilla con IA
+logic.js        lógica de importes y validación, compartida entre la app y el servidor
 sw.js           service worker (instalable y abre sin señal)
+test/           pruebas automáticas
 manifest.json   datos de la app instalable, junto con los íconos
 ```

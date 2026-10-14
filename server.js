@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { Pool } = require('pg');
 const leer = require('./api/leer.js');
+const Logic = require('./logic.js');
 
 // Usuario inicial: se usa para crear el primer administrador cuando la tabla de usuarios está vacía,
 // o como único usuario si no hay base de datos conectada. No hay valores por defecto en el código.
@@ -42,6 +43,7 @@ const dbReady = pool ? (async () => {
   await pool.query(`CREATE TABLE IF NOT EXISTS usuarios (
     id SERIAL PRIMARY KEY, nombre TEXT NOT NULL, pass_hash TEXT NOT NULL,
     es_admin BOOLEAN NOT NULL DEFAULT false, creado TIMESTAMPTZ NOT NULL DEFAULT now())`);
+  await pool.query('ALTER TABLE planillas ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1');
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS usuarios_nombre_idx ON usuarios (lower(nombre))');
   await pool.query('CREATE TABLE IF NOT EXISTS config (clave TEXT PRIMARY KEY, valor TEXT NOT NULL)');
   const n = (await pool.query('SELECT count(*)::int AS n FROM usuarios')).rows[0].n;
@@ -57,18 +59,44 @@ const dbReady = pool ? (async () => {
 })().catch(e => { modo = 'error'; console.error('DB:', e.message); }) : null;
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.json': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.js': 'text/javascript; charset=utf-8' };
-const FILES = ['index.html', 'manifest.json', 'icon.svg', 'sw.js', 'icon-192.png', 'icon-512.png', 'icon-maskable.png', 'apple-touch-icon.png'];
+const FILES = ['index.html', 'logic.js', 'manifest.json', 'sw.js', 'icon-192.png', 'icon-512.png', 'icon-maskable.png', 'apple-touch-icon.png'];
 
-// Límite de lectura de fotos: 3 cada 10 minutos (ventana deslizante, común a toda la app).
+// Límite de lectura de fotos: 3 cada 10 minutos por usuario (ventana deslizante).
 const FOTOS_MAX = 3, FOTOS_VENTANA = 10 * 60 * 1000;
-let fotos = [];
-function fotosEstado() {
-  const ahora = Date.now();
-  fotos = fotos.filter(t => ahora - t < FOTOS_VENTANA);
-  return { restantes: Math.max(0, FOTOS_MAX - fotos.length), espera: fotos.length ? Math.ceil((fotos[0] + FOTOS_VENTANA - ahora) / 60000) : 0 };
+const fotos = new Map();
+function fotosEstado(uid) {
+  const ahora = Date.now(), t = (fotos.get(uid) || []).filter(x => ahora - x < FOTOS_VENTANA);
+  fotos.set(uid, t);
+  return { t, restantes: Math.max(0, FOTOS_MAX - t.length), espera: t.length ? Math.ceil((t[0] + FOTOS_VENTANA - ahora) / 60000) : 0 };
 }
 
-const send = (res, code, obj) => { res.statusCode = code; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(obj)); };
+// Cabeceras de seguridad en todas las respuestas (la app no carga nada externo).
+const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+function cabeceras(req, res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=()');
+  res.setHeader('Content-Security-Policy', CSP);
+  if (req.headers['x-forwarded-proto'] === 'https') res.setHeader('Strict-Transport-Security', 'max-age=15552000');
+}
+
+// IP del cliente. Detrás de un proxy (Railway) se toma la que agregó el proxy, que es la última de X-Forwarded-For;
+// las anteriores las puede inventar el cliente. TRUST_PROXY_HOPS=0 ignora la cabecera (conexión directa).
+const HOPS = process.env.TRUST_PROXY_HOPS === undefined ? 1 : Number(process.env.TRUST_PROXY_HOPS);
+function ipCliente(req) {
+  const xs = String(req.headers['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean);
+  return HOPS > 0 && xs.length ? xs[Math.max(0, xs.length - HOPS)] : (req.socket.remoteAddress || '');
+}
+const VENTANA = 10 * 60 * 1000;
+const porIp = new Map(), porUsuario = new Map();   // intentos de login fallidos
+function recientes(m, k) { const t = (m.get(k) || []).filter(x => Date.now() - x < VENTANA); if (t.length) m.set(k, t); else m.delete(k); return t; }
+setInterval(() => { for (const m of [porIp, porUsuario]) for (const k of [...m.keys()]) recientes(m, k); }, 60 * 1000).unref();
+const dormir = ms => new Promise(ok => setTimeout(ok, ms));
+let hashFalso = null;   // para que "usuario inexistente" tarde lo mismo que "contraseña incorrecta"
+hashPass('contraseña-de-relleno').then(h => { hashFalso = h; });
+
+const send = (res, code, obj) => { res.statusCode = code; res.setHeader('content-type', 'application/json'); res.setHeader('cache-control', 'no-store'); res.end(JSON.stringify(obj)); };
 function body(req, limit = 15e6) {
   return new Promise(ok => {
     let raw = '';
@@ -99,21 +127,27 @@ function bloqueado(k) { const t = (fallos.get(k) || []).filter(x => Date.now() -
 async function login(req, res) {
   const b = await body(req, 1e4);
   const nombre = typeof b.user === 'string' ? b.user.trim() : '', pass = typeof b.pass === 'string' ? b.pass : '';
-  const key = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '') .split(',')[0].trim() + '|' + nombre.toLowerCase();
-  if (bloqueado(key)) return send(res, 429, { error: 'Demasiados intentos. Probá de nuevo en unos minutos.' });
+  const ip = ipCliente(req), clave = nombre.toLowerCase();
+  if (recientes(porIp, ip).length >= 20) return send(res, 429, { error: 'Demasiados intentos. Probá de nuevo en unos minutos.' });
+  const previos = recientes(porUsuario, clave).length;
+  if (previos > 3) await dormir(Math.min(5000, (previos - 3) * 500));   // frena la fuerza bruta sin dejar a nadie afuera
   if (dbReady) await dbReady;
   if (modo === 'error' || modo === 'pendiente') return send(res, 503, { error: 'El servidor no pudo conectarse a la base de datos. Probá de nuevo en un minuto.' });
-  let u = null;
-  if (modo === 'env') {
-    if (!ENV_CONFIGURADO) return send(res, 503, { error: 'El servidor no tiene usuario configurado.' });
-    if (nombre && same(nombre, USER) && same(pass, PASS)) u = ENV_USER;
-  }
+  if (modo === 'env' && !ENV_CONFIGURADO) return send(res, 503, { error: 'El servidor no tiene usuario configurado.' });
+  let u = null, hash = hashFalso || 'x:x';
+  if (modo === 'env') { if (nombre && same(nombre, USER)) hash = null; }
   else {
     const r = await pool.query('SELECT id, nombre, es_admin, pass_hash FROM usuarios WHERE lower(nombre)=lower($1)', [nombre]);
-    if (r.rows[0] && await checkPass(pass, r.rows[0].pass_hash)) u = r.rows[0];
+    if (r.rows[0]) { u = r.rows[0]; hash = u.pass_hash; }
   }
-  if (!u) { fallos.get(key).push(Date.now()); return send(res, 401, { error: 'Usuario o contraseña incorrectos' }); }
-  fallos.delete(key);
+  let ok = false;
+  if (modo === 'env') { ok = hash === null && same(pass, PASS); await checkPass(pass, hashFalso || 'x:x'); if (ok) u = ENV_USER; }
+  else ok = await checkPass(pass, hash) && !!u;   // siempre se calcula el hash: el tiempo no revela si el usuario existe
+  if (!ok) {
+    for (const [m, k] of [[porIp, ip], [porUsuario, clave]]) { const t = m.get(k) || []; t.push(Date.now()); m.set(k, t); }
+    return send(res, 401, { error: 'Usuario o contraseña incorrectos' });
+  }
+  porUsuario.delete(clave);
   send(res, 200, { token: makeToken(u), user: u.nombre, admin: !!u.es_admin });
 }
 
@@ -130,7 +164,7 @@ async function cuentas(req, res, url, yo) {
       nombre = b.nombre.trim();
     }
     if (b.passNueva) {
-      if (typeof b.passNueva !== 'string' || b.passNueva.length < 6) return send(res, 400, { error: 'La contraseña nueva debe tener al menos 6 caracteres.' });
+      if (typeof b.passNueva !== 'string' || b.passNueva.length < 8) return send(res, 400, { error: 'La contraseña nueva debe tener al menos 8 caracteres.' });
       if (!(await checkPass(String(b.passActual || ''), yo.pass_hash))) return send(res, 400, { error: 'La contraseña actual no es correcta.' });
       hash = await hashPass(b.passNueva);
     }
@@ -147,14 +181,14 @@ async function cuentas(req, res, url, yo) {
     const b = await body(req, 1e4);
     const nombre = String(b.nombre || '').trim();
     if (!NOMBRE_OK.test(nombre)) return send(res, 400, { error: 'El nombre debe tener entre 3 y 30 caracteres: letras, números, punto, guion o guion bajo, sin espacios.' });
-    if (typeof b.pass !== 'string' || b.pass.length < 6) return send(res, 400, { error: 'La contraseña debe tener al menos 6 caracteres.' });
+    if (typeof b.pass !== 'string' || b.pass.length < 8) return send(res, 400, { error: 'La contraseña debe tener al menos 8 caracteres.' });
     try { await pool.query('INSERT INTO usuarios (nombre, pass_hash, es_admin) VALUES ($1,$2,false)', [nombre, await hashPass(b.pass)]); } catch (e) { return dup(e); }
     return send(res, 200, { ok: true });
   }
   const m = /^\/api\/usuarios\/(\d+)(\/pass)?$/.exec(url);
   if (m && m[2] && req.method === 'PUT') {
     const b = await body(req, 1e4);
-    if (typeof b.pass !== 'string' || b.pass.length < 6) return send(res, 400, { error: 'La contraseña debe tener al menos 6 caracteres.' });
+    if (typeof b.pass !== 'string' || b.pass.length < 8) return send(res, 400, { error: 'La contraseña debe tener al menos 8 caracteres.' });
     const r = await pool.query('UPDATE usuarios SET pass_hash=$2 WHERE id=$1', [m[1], await hashPass(b.pass)]);
     return r.rowCount ? send(res, 200, { ok: true }) : send(res, 404, { error: 'No existe ese usuario.' });
   }
@@ -180,23 +214,29 @@ async function planillas(req, res, url) {
     return send(res, 200, { planillas: r.rows });
   }
   if (!id && req.method === 'POST') {
-    const b = await body(req);
-    const r = await pool.query('INSERT INTO planillas (data) VALUES ($1) RETURNING id', [JSON.stringify({ clients: Array.isArray(b.clients) ? b.clients : [] })]);
-    return send(res, 200, { id: r.rows[0].id });
+    const b = await body(req, 2e6);
+    const v = Logic.limpiarClientes(b.clients === undefined ? [] : b.clients);
+    if (!v.ok) return send(res, 400, { error: v.error });
+    const r = await pool.query('INSERT INTO planillas (data) VALUES ($1) RETURNING id, version', [JSON.stringify({ clients: v.clients })]);
+    return send(res, 200, { id: r.rows[0].id, version: r.rows[0].version });
   }
   if (id === 'ultima' && req.method === 'GET') {
-    const r = await pool.query('SELECT id, data FROM planillas ORDER BY id DESC LIMIT 1');
+    const r = await pool.query('SELECT id, data, version FROM planillas ORDER BY id DESC LIMIT 1');
     return send(res, 200, r.rows[0] || {});
   }
   if (id && req.method === 'GET') {
-    const r = await pool.query('SELECT id, data FROM planillas WHERE id=$1', [id]);
+    const r = await pool.query('SELECT id, data, version FROM planillas WHERE id=$1', [id]);
     return r.rows[0] ? send(res, 200, r.rows[0]) : send(res, 404, { error: 'No existe' });
   }
   if (id && req.method === 'PUT') {
-    const b = await body(req);
-    if (!Array.isArray(b.clients)) return send(res, 400, { error: 'Datos inválidos' });
-    await pool.query('UPDATE planillas SET data=$2, updated_at=now() WHERE id=$1', [id, JSON.stringify({ clients: b.clients })]);
-    return send(res, 200, { ok: true });
+    const b = await body(req, 2e6);
+    const v = Logic.limpiarClientes(b.clients);
+    if (!v.ok) return send(res, 400, { error: v.error });
+    const ver = Number.isInteger(b.version) ? b.version : null;   // si viene, solo guarda si nadie cambió la planilla desde entonces
+    const r = await pool.query('UPDATE planillas SET data=$2, updated_at=now(), version=version+1 WHERE id=$1 AND ($3::int IS NULL OR version=$3) RETURNING version', [id, JSON.stringify({ clients: v.clients }), ver]);
+    if (r.rowCount) return send(res, 200, { ok: true, version: r.rows[0].version });
+    const existe = await pool.query('SELECT version FROM planillas WHERE id=$1', [id]);
+    return existe.rows[0] ? send(res, 409, { error: 'La planilla fue modificada desde otro lugar.', version: existe.rows[0].version }) : send(res, 404, { error: 'No existe' });
   }
   if (id && req.method === 'DELETE') {
     await pool.query('DELETE FROM planillas WHERE id=$1', [id]);
@@ -205,9 +245,11 @@ async function planillas(req, res, url) {
   send(res, 405, { error: 'Método no permitido' });
 }
 
-http.createServer(async (req, res) => {
+const servidor = http.createServer(async (req, res) => {
   const url = req.url.split('?')[0];
+  cabeceras(req, res);
   try {
+    if (url === '/health') return send(res, 200, { ok: true });
     if (url === '/api/login' && req.method === 'POST') {
       return await login(req, res);
     }
@@ -220,13 +262,13 @@ http.createServer(async (req, res) => {
       if (url === '/api/yo' || url.startsWith('/api/usuarios')) return await cuentas(req, res, url, yo);
       if (url === '/api/leer') {
         req.body = await body(req);
-        const est = fotosEstado();
+        const est = fotosEstado(yo.id);
         if (!est.restantes) return send(res, 429, { error: `Límite alcanzado: solo se pueden leer ${FOTOS_MAX} fotos cada 10 minutos. Probá de nuevo en ${est.espera} min.`, restantes: 0 });
-        fotos.push(Date.now());
+        est.t.push(Date.now());
         res.status = c => { res.statusCode = c; return res; };
-        res.json = o => send(res, res.statusCode || 200, res.statusCode >= 400 ? o : { ...o, restantes: fotosEstado().restantes });
+        res.json = o => send(res, res.statusCode || 200, res.statusCode >= 400 ? o : { ...o, restantes: fotosEstado(yo.id).restantes });
         await leer(req, res);
-        if (res.statusCode >= 400) fotos.pop();   // si falló, no gasta el cupo
+        if (res.statusCode >= 400) est.t.pop();   // si falló, no gasta el cupo
         return;
       }
       return await planillas(req, res, url);
@@ -235,9 +277,22 @@ http.createServer(async (req, res) => {
     if (!FILES.includes(name)) { res.statusCode = 404; return res.end('No encontrado'); }
     res.setHeader('content-type', TYPES[path.extname(name)]);
     if (name === 'sw.js' || name === 'index.html') res.setHeader('cache-control', 'no-cache');
-    fs.createReadStream(path.join(__dirname, name)).pipe(res);
+    const lectura = fs.createReadStream(path.join(__dirname, name));
+    lectura.on('error', () => { if (!res.headersSent) res.statusCode = 500; res.end(); });
+    lectura.pipe(res);
   } catch (e) {
     console.error(e);
-    if (!res.headersSent) send(res, 500, { error: 'Error interno' });
+    const sinBase = e && /^(ECONN|ETIMEDOUT|ENOTFOUND|57P|08)/.test(String(e.code));
+    if (!res.headersSent) send(res, sinBase ? 503 : 500, { error: sinBase ? 'Sin conexión con la base de datos.' : 'Error interno' });
   }
-}).listen(process.env.PORT || 3000);
+});
+servidor.listen(process.env.PORT || 3000);
+
+// Un corte de la base no debe tirar el servidor: se registra y se sigue (las consultas siguientes se reconectan solas).
+if (pool) pool.on('error', e => console.error('DB (conexión inactiva):', e.message));
+process.on('unhandledRejection', e => console.error('Promesa sin manejar:', e));
+process.on('uncaughtException', e => { console.error('Error fatal:', e); process.exit(1); });
+process.on('SIGTERM', () => {
+  servidor.close(() => (pool ? pool.end() : Promise.resolve()).finally(() => process.exit(0)));
+  setTimeout(() => process.exit(0), 8000).unref();
+});
