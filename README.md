@@ -18,7 +18,7 @@ Las planillas viven **solo en la base de datos (Postgres)**. Cada cambio se env�
 
 ## Tecnología
 
-- Frontend: un único `index.html` (HTML, CSS y JavaScript, sin frameworks).
+- Frontend: HTML, CSS y JavaScript sin frameworks (`index.html`, `styles.css`, `app.js`, `logic.js`).
 - Servidor: Node.js sin framework (`server.js`), con la librería `pg` para Postgres.
 - Lectura de fotos: API de Anthropic (`api/leer.js`), llamada desde el servidor.
 
@@ -43,12 +43,14 @@ Corre las pruebas de la lógica de importes y del servidor (login, usuarios, pla
 
 - La lectura de fotos tiene un tope de **3 fotos cada 10 minutos** (lo controla el servidor).
 - Las contraseñas se guardan con hash (scrypt), nunca en texto, y las sesiones duran 30 días. Cambiar la contraseña cierra las sesiones abiertas de ese usuario.
-- Todos los usuarios ven las mismas planillas.
+- Cada usuario ve y edita solo sus planillas; el administrador puede ver y abrir todas.
 
 ## Estructura
 
 ```
-index.html      la app (pantallas, lógica y estilos)
+index.html      estructura de la página
+app.js          la app (pantallas y acciones)
+styles.css      estilos
 server.js       servidor: archivos, login, usuarios, planillas y límite de fotos
 api/leer.js     lectura de la foto de la planilla con IA
 logic.js        lógica de importes y validación, compartida entre la app y el servidor

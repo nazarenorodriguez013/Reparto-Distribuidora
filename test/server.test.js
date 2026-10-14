@@ -122,6 +122,24 @@ test('con base de datos', { skip: !DB && 'definí TEST_DATABASE_URL para correr 
       assert.equal((await sv.llamar('DELETE', `/api/planillas/${a.id}`, null, tk))[0], 200);
     });
 
+    await t.test('planillas por usuario: cada uno ve solo las suyas; el administrador ve todas', async () => {
+      const [, ana] = await sv.llamar('POST', '/api/login', { user: 'ana', pass: 'nueva-clave-1' });
+      const [, deAdmin] = await sv.llamar('POST', '/api/planillas', { clients: [{ name: 'Del admin', total: 1 }] }, tk);
+      const [, deAna] = await sv.llamar('POST', '/api/planillas', { clients: [{ name: 'De Ana', total: 2 }] }, ana.token);
+      assert.equal((await sv.llamar('GET', `/api/planillas/${deAdmin.id}`, null, ana.token))[0], 404, 'Ana no puede leer la del admin');
+      assert.equal((await sv.llamar('PUT', `/api/planillas/${deAdmin.id}`, { clients: [{ name: 'x', total: 1 }] }, ana.token))[0], 404, 'ni modificarla');
+      assert.equal((await sv.llamar('DELETE', `/api/planillas/${deAdmin.id}`, null, ana.token))[0], 404, 'ni borrarla');
+      const [, listaAna] = await sv.llamar('GET', '/api/planillas', null, ana.token);
+      assert.ok(listaAna.planillas.every(p => p.id !== deAdmin.id) && listaAna.planillas.some(p => p.id === deAna.id));
+      assert.ok(listaAna.planillas.every(p => p.usuario === undefined), 'no se muestran nombres de dueños a usuarios comunes');
+      const [, ultimaAna] = await sv.llamar('GET', '/api/planillas/ultima', null, ana.token);
+      assert.equal(ultimaAna.id, deAna.id, 'la última es la propia, no la de otro');
+      const [, listaAdmin] = await sv.llamar('GET', '/api/planillas', null, tk);
+      assert.ok([deAdmin.id, deAna.id].every(i => listaAdmin.planillas.some(p => p.id === i)), 'el administrador ve todas');
+      assert.equal(listaAdmin.planillas.find(p => p.id === deAna.id).usuario, 'ana');
+      assert.equal((await sv.llamar('GET', `/api/planillas/${deAna.id}`, null, tk))[0], 200, 'y puede abrir las de otros');
+    });
+
     await t.test('fotos: negativos, límite por usuario y sin filtrar errores internos', async () => {
       const img = 'data:image/png;base64,iVBORw0KGgo=';
       const [s, j] = await sv.llamar('POST', '/api/leer', { image: img }, tk);
@@ -142,6 +160,22 @@ test('con base de datos', { skip: !DB && 'definí TEST_DATABASE_URL para correr 
       assert.ok(ok, 'y se reconecta solo');
     });
   } finally { await sv.parar(); mock.close(); await pool.end(); }
+});
+
+test('migración: las planillas de antes (sin dueño) pasan al administrador', { skip: !DB && 'definí TEST_DATABASE_URL para correr estas pruebas' }, async () => {
+  const { Pool } = require('pg');
+  const pool = new Pool({ connectionString: DB });
+  await pool.query('DROP TABLE IF EXISTS planillas, usuarios, config');
+  await pool.query(`CREATE TABLE planillas (id SERIAL PRIMARY KEY, data JSONB NOT NULL DEFAULT '{"clients":[]}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);   // esquema de la versión anterior
+  await pool.query(`INSERT INTO planillas (data) VALUES ('{"clients":[{"id":"a","name":"Vieja","total":5,"pay":{},"done":false}]}')`);
+  const sv = await arrancar({ DATABASE_URL: DB, APP_USER: 'admin', APP_PASS: 'clave-de-prueba', AUTH_SECRET: 'x'.repeat(40) });
+  try {
+    const [, l] = await sv.llamar('POST', '/api/login', { user: 'admin', pass: 'clave-de-prueba' });
+    const [s, lista] = await sv.llamar('GET', '/api/planillas', null, l.token);
+    assert.equal(s, 200); assert.equal(lista.planillas.length, 1);
+    const [, u] = await sv.llamar('GET', '/api/planillas/ultima', null, l.token);
+    assert.equal(u.data.clients[0].name, 'Vieja'); assert.equal(u.version, 1);
+  } finally { await sv.parar(); await pool.end(); }
 });
 
 test('sin clave de Anthropic se avisa y no se filtran detalles de la API', { skip: !DB && 'definí TEST_DATABASE_URL para correr estas pruebas' }, async () => {

@@ -44,6 +44,7 @@ const dbReady = pool ? (async () => {
     id SERIAL PRIMARY KEY, nombre TEXT NOT NULL, pass_hash TEXT NOT NULL,
     es_admin BOOLEAN NOT NULL DEFAULT false, creado TIMESTAMPTZ NOT NULL DEFAULT now())`);
   await pool.query('ALTER TABLE planillas ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1');
+  await pool.query('ALTER TABLE planillas ADD COLUMN IF NOT EXISTS usuario_id INTEGER');
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS usuarios_nombre_idx ON usuarios (lower(nombre))');
   await pool.query('CREATE TABLE IF NOT EXISTS config (clave TEXT PRIMARY KEY, valor TEXT NOT NULL)');
   const n = (await pool.query('SELECT count(*)::int AS n FROM usuarios')).rows[0].n;
@@ -53,13 +54,15 @@ const dbReady = pool ? (async () => {
     await pool.query('INSERT INTO usuarios (nombre, pass_hash, es_admin) VALUES ($1,$2,true) ON CONFLICT DO NOTHING', [nombre, await hashPass(clave)]);
     if (!PASS) console.log(`Usuario inicial creado: ${nombre} / contraseña temporal: ${clave} (cambiala en Configuración)`);
   }
+  // las planillas anteriores (de cuando eran compartidas) pasan al administrador, que es el primer usuario
+  await pool.query('UPDATE planillas SET usuario_id = (SELECT id FROM usuarios ORDER BY id LIMIT 1) WHERE usuario_id IS NULL');
   await pool.query("INSERT INTO config (clave, valor) VALUES ('secret', $1) ON CONFLICT DO NOTHING", [crypto.randomBytes(32).toString('hex')]);
   if (!process.env.AUTH_SECRET) SECRET = (await pool.query("SELECT valor FROM config WHERE clave='secret'")).rows[0].valor;
   modo = 'db';
 })().catch(e => { modo = 'error'; console.error('DB:', e.message); }) : null;
 
-const TYPES = { '.html': 'text/html; charset=utf-8', '.json': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.js': 'text/javascript; charset=utf-8' };
-const FILES = ['index.html', 'logic.js', 'manifest.json', 'sw.js', 'icon-192.png', 'icon-512.png', 'icon-maskable.png', 'apple-touch-icon.png'];
+const TYPES = { '.html': 'text/html; charset=utf-8', '.json': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+const FILES = ['index.html', 'app.js', 'logic.js', 'styles.css', 'manifest.json', 'sw.js', 'icon-192.png', 'icon-512.png', 'icon-maskable.png', 'apple-touch-icon.png'];
 
 // Límite de lectura de fotos: 3 cada 10 minutos por usuario (ventana deslizante).
 const FOTOS_MAX = 3, FOTOS_VENTANA = 10 * 60 * 1000;
@@ -71,7 +74,7 @@ function fotosEstado(uid) {
 }
 
 // Cabeceras de seguridad en todas las respuestas (la app no carga nada externo).
-const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 function cabeceras(req, res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -200,32 +203,36 @@ async function cuentas(req, res, url, yo) {
   return send(res, 404, { error: 'No encontrado' });
 }
 
-async function planillas(req, res, url) {
+// Cada usuario ve y edita solo sus planillas; el administrador puede ver y abrir todas.
+async function planillas(req, res, url, yo) {
   if (!pool) return send(res, 503, { error: 'Base de datos no configurada' });
   await dbReady;
   const m = /^\/api\/planillas(?:\/(\d+|ultima))?$/.exec(url);
   if (!m) return send(res, 404, { error: 'No encontrado' });
   const id = m[1];
+  const admin = !!yo.es_admin;
+  const acceso = admin ? '$1::int IS NOT NULL' : 'p.usuario_id = $1';   // $1 = id del usuario (el administrador ve todas)
   if (!id && req.method === 'GET') {
-    const r = await pool.query(`SELECT id, created_at, updated_at,
-      jsonb_array_length(data->'clients') AS clientes,
-      (SELECT COALESCE(SUM((c->>'total')::numeric),0) FROM jsonb_array_elements(data->'clients') c) AS total
-      FROM planillas ORDER BY id DESC LIMIT 60`);
-    return send(res, 200, { planillas: r.rows });
+    const r = await pool.query(`SELECT p.id, p.created_at, p.updated_at, u.nombre AS usuario,
+      jsonb_array_length(p.data->'clients') AS clientes,
+      (SELECT COALESCE(SUM((c->>'total')::numeric),0) FROM jsonb_array_elements(p.data->'clients') c) AS total
+      FROM planillas p LEFT JOIN usuarios u ON u.id = p.usuario_id
+      WHERE ${acceso} ORDER BY p.id DESC LIMIT 60`, [yo.id]);
+    return send(res, 200, { planillas: r.rows.map(x => admin ? x : { ...x, usuario: undefined }), todas: admin });
   }
   if (!id && req.method === 'POST') {
     const b = await body(req, 2e6);
     const v = Logic.limpiarClientes(b.clients === undefined ? [] : b.clients);
     if (!v.ok) return send(res, 400, { error: v.error });
-    const r = await pool.query('INSERT INTO planillas (data) VALUES ($1) RETURNING id, version', [JSON.stringify({ clients: v.clients })]);
+    const r = await pool.query('INSERT INTO planillas (data, usuario_id) VALUES ($1, $2) RETURNING id, version', [JSON.stringify({ clients: v.clients }), yo.id]);
     return send(res, 200, { id: r.rows[0].id, version: r.rows[0].version });
   }
   if (id === 'ultima' && req.method === 'GET') {
-    const r = await pool.query('SELECT id, data, version FROM planillas ORDER BY id DESC LIMIT 1');
+    const r = await pool.query('SELECT p.id, p.data, p.version FROM planillas p WHERE p.usuario_id = $1 ORDER BY p.id DESC LIMIT 1', [yo.id]);
     return send(res, 200, r.rows[0] || {});
   }
   if (id && req.method === 'GET') {
-    const r = await pool.query('SELECT id, data, version FROM planillas WHERE id=$1', [id]);
+    const r = await pool.query(`SELECT p.id, p.data, p.version FROM planillas p WHERE p.id=$2 AND (${acceso})`, [yo.id, id]);
     return r.rows[0] ? send(res, 200, r.rows[0]) : send(res, 404, { error: 'No existe' });
   }
   if (id && req.method === 'PUT') {
@@ -233,14 +240,14 @@ async function planillas(req, res, url) {
     const v = Logic.limpiarClientes(b.clients);
     if (!v.ok) return send(res, 400, { error: v.error });
     const ver = Number.isInteger(b.version) ? b.version : null;   // si viene, solo guarda si nadie cambió la planilla desde entonces
-    const r = await pool.query('UPDATE planillas SET data=$2, updated_at=now(), version=version+1 WHERE id=$1 AND ($3::int IS NULL OR version=$3) RETURNING version', [id, JSON.stringify({ clients: v.clients }), ver]);
+    const r = await pool.query(`UPDATE planillas p SET data=$3, updated_at=now(), version=p.version+1 WHERE p.id=$2 AND (${acceso}) AND ($4::int IS NULL OR p.version=$4) RETURNING p.version`, [yo.id, id, JSON.stringify({ clients: v.clients }), ver]);
     if (r.rowCount) return send(res, 200, { ok: true, version: r.rows[0].version });
-    const existe = await pool.query('SELECT version FROM planillas WHERE id=$1', [id]);
+    const existe = await pool.query(`SELECT p.version FROM planillas p WHERE p.id=$2 AND (${acceso})`, [yo.id, id]);
     return existe.rows[0] ? send(res, 409, { error: 'La planilla fue modificada desde otro lugar.', version: existe.rows[0].version }) : send(res, 404, { error: 'No existe' });
   }
   if (id && req.method === 'DELETE') {
-    await pool.query('DELETE FROM planillas WHERE id=$1', [id]);
-    return send(res, 200, { ok: true });
+    const r = await pool.query(`DELETE FROM planillas p WHERE p.id=$2 AND (${acceso})`, [yo.id, id]);
+    return r.rowCount ? send(res, 200, { ok: true }) : send(res, 404, { error: 'No existe' });
   }
   send(res, 405, { error: 'Método no permitido' });
 }
@@ -271,12 +278,12 @@ const servidor = http.createServer(async (req, res) => {
         if (res.statusCode >= 400) est.t.pop();   // si falló, no gasta el cupo
         return;
       }
-      return await planillas(req, res, url);
+      return await planillas(req, res, url, yo);
     }
     const name = url === '/' ? 'index.html' : url.slice(1);
     if (!FILES.includes(name)) { res.statusCode = 404; return res.end('No encontrado'); }
     res.setHeader('content-type', TYPES[path.extname(name)]);
-    if (name === 'sw.js' || name === 'index.html') res.setHeader('cache-control', 'no-cache');
+    if (name === 'sw.js' || name.endsWith('.html') || name.endsWith('.js') || name.endsWith('.css')) res.setHeader('cache-control', 'no-cache');   // siempre se revalida: la app se actualiza sola
     const lectura = fs.createReadStream(path.join(__dirname, name));
     lectura.on('error', () => { if (!res.headersSent) res.statusCode = 500; res.end(); });
     lectura.pipe(res);
