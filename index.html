@@ -103,6 +103,11 @@ header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
 .seg button{flex:1;padding:12px 4px;min-height:46px;border-radius:12px;border:2px solid var(--bd);background:var(--bg);color:var(--tx);font-weight:700;font-size:15px}
 .pays button.bad-on{border-color:var(--bad);background:var(--bad);color:#fff}
 .seg button.on{border-color:var(--bad);background:var(--bad);color:#fff}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.chip{padding:10px 12px;min-height:42px;border-radius:99px;border:2px solid var(--bd);background:var(--bg);color:var(--tx);font-weight:700;font-size:14px}
+.chip.on{border-color:var(--pri);background:var(--pri);color:#fff}
+.mixrow{margin:8px 0}
+.mixrow label{display:block;font-size:13px;color:var(--mut);margin-bottom:4px}
 </style>
 </head>
 <body>
@@ -154,6 +159,15 @@ let loginErr = '', loginUser = '';
 let USERNAME = '';
 try{ USERNAME = localStorage.getItem('reparto-user') || ''; }catch(e){}
 let editId = null;        // cliente abierto para editar en Planilla
+// Pago mixto: el último medio elegido se completa solo con lo que falta (se puede editar)
+let mixSel = {}, mixManual = {};
+const r2 = n => Math.round(n*100)/100;
+function mixRecalc(c){
+  const sel = mixSel[c.id]; if(!sel || !sel.length || mixManual[c.id]) return;
+  const last = sel[sel.length-1];
+  const otros = sel.slice(0,-1).reduce((a,k)=>a+(c.pay[k]||0),0);
+  c.pay[last] = Math.max(0, r2(debe(c) - otros));
+}
 let rechOpen = null;      // cliente con el panel de rechazo abierto
 let sel = null;           // cliente abierto en 'Siguientes'
 let mixOpen = null;       // id de cliente con panel mixto abierto
@@ -481,9 +495,11 @@ function payButtons(c){
   ${mixOpen===c.id?mixPanel(c):''}${rechOpen===c.id?rechPanel(c):''}`;
 }
 function mixPanel(c){
-  return `<div class="mut" style="margin:10px 0 4px">Cómo paga${c.rech&&rechMonto(c)>0?' lo que queda':''}</div>
-    <div class="mix">${METHODS.filter(m=>m[0]!=='mix').map(([k,l])=>
-      `<div><label>${l}</label><input data-f="mix" data-k="${k}" data-id="${c.id}" inputmode="decimal" value="${fmtInput(c.pay[k])}" placeholder="0"></div>`).join('')}</div>
+  const sel = mixSel[c.id] || (mixSel[c.id] = KEYS.filter(k=>(c.pay[k]||0)>0));
+  const last = sel[sel.length-1], auto = !mixManual[c.id];
+  return `<div class="mut" style="margin:10px 0 4px">Elegí cómo paga${c.rech&&rechMonto(c)>0?' lo que queda ('+money(debe(c))+')':''}</div>
+    <div class="chips">${KEYS.map(k=>`<button class="chip ${sel.includes(k)?'on':''}" data-a="mixtog" data-k="${k}" data-id="${c.id}">${LABEL[k]}</button>`).join('')}</div>
+    ${sel.length?sel.map(k=>`<div class="mixrow"><label>${LABEL[k]}${k===last&&auto&&sel.length>1?' · resto automático':''}</label><input data-f="mix" data-k="${k}" data-id="${c.id}" inputmode="decimal" value="${fmtInput(c.pay[k])}" placeholder="0"></div>`).join(''):'<div class="mut">Tocá los medios de pago que usa.</div>'}
     <div class="mut" id="mixrest-${c.id}">${restTxt(debe(c)-sum(c))}</div>`;
 }
 function rechPanel(c){
@@ -491,9 +507,10 @@ function rechPanel(c){
   return `<div class="mut" style="margin:10px 0 4px">Pedido rechazado</div>
     <div class="seg">${[['parcial','Parcial'],['total','Total']].map(([k,l])=>
       `<button class="${r.tipo===k?'on':''}" data-a="rech" data-k="${k}" data-id="${c.id}">${l}</button>`).join('')}</div>
-    ${r.tipo==='parcial'?`<input data-f="rmonto" data-id="${c.id}" inputmode="decimal" value="${fmtInput(r.monto)}" placeholder="Monto rechazado $" style="margin-top:8px;text-align:right">`:''}
+    ${r.tipo==='parcial'?`<div class="mixrow"><label>Monto rechazado</label><input data-f="rmonto" data-id="${c.id}" inputmode="decimal" value="${fmtInput(r.monto)}" placeholder="0" style="text-align:right"></div>
+    <div class="mixrow"><label>Resto a cobrar · se calcula solo, podés editarlo</label><input data-f="rresto" data-id="${c.id}" inputmode="decimal" value="${fmtInput(r2(c.total-(r.monto||0)))}" placeholder="0" style="text-align:right"></div>`:''}
     <input data-f="rmotivo" data-id="${c.id}" list="motivos" value="${esc(r.motivo||'')}" placeholder="Motivo (ej: cerrado, producto dañado)" style="margin-top:8px">
-    <div class="mut" style="margin-top:8px">${r.tipo==='total'?'Se rechaza todo el pedido: no hay nada para cobrar.':'Después elegí arriba cómo paga lo que queda.'}</div>
+    <div class="mut" style="margin-top:8px">${r.tipo==='total'?'Se rechaza todo el pedido: no hay nada para cobrar.':'Después elegí arriba cómo paga lo que queda (Efectivo, Transferencia, Pago mixto…).'}</div>
     <div class="row" style="margin-top:10px"><button class="btn sec" data-a="rech" data-k="ninguno" data-id="${c.id}">Quitar rechazo</button><button class="btn" data-a="rechok" data-id="${c.id}">Listo ✔</button></div>`;
 }
 const restTxt = r => Math.abs(r)<0.005?'Completo ✔': r>0?`Falta asignar ${money(r)}`:`Te pasaste ${money(-r)}`;
@@ -664,8 +681,8 @@ function vResumen(){
 // si ya tenía un único medio de pago, lo ajusta a lo que realmente hay que cobrar
 function resync(c){ if(c.method && c.method!=='mix' && c.method!=='rech' && c.pay[c.method]!==undefined) c.pay={[c.method]:debe(c)}; }
 function setPay(c, k){
-  if(k==='mix'){ c.method='mix'; c.done=true; mixOpen=c.id; rechOpen=null; return; }
-  c.method=k; c.done=true; c.pay={[k]:debe(c)}; mixOpen=null; rechOpen=null;
+  if(k==='mix'){ c.method='mix'; c.done=true; mixOpen=c.id; rechOpen=null; delete mixSel[c.id]; mixManual[c.id]=false; return; }
+  c.method=k; c.done=true; c.pay={[k]:debe(c)}; mixOpen=null; rechOpen=null; delete mixSel[c.id];
 }
 
 document.addEventListener('click', e=>{
@@ -748,11 +765,15 @@ document.addEventListener('click', e=>{
     case 'pay': setPay(c, el.dataset.k); sel = el.dataset.k==='mix' ? id : null; break;
     case 'rechopen': rechOpen = rechOpen===id ? null : id; if(rechOpen===id) mixOpen=null; if(!c.rech) c.rech={tipo:'parcial',monto:0,motivo:''}; break;
     case 'nopay': sel=null; c.method=null; c.pay={}; c.rech=null; c.done=true; mixOpen=null; rechOpen=null; break;
+    case 'mixtog': {
+      const k = el.dataset.k, sel = mixSel[id] || (mixSel[id] = KEYS.filter(x=>(c.pay[x]||0)>0));
+      if(sel.includes(k)){ sel.splice(sel.indexOf(k),1); delete c.pay[k]; } else sel.push(k);
+      mixManual[id] = false; mixRecalc(c); break; }
     case 'rech': {
       const k = el.dataset.k, prev = c.rech || {};
       if(k==='ninguno'){ c.rech=null; if(c.method==='rech') c.method=null; rechOpen=null; resync(c); }
       else if(k==='total'){ c.rech={tipo:'total', monto:c.total, motivo:prev.motivo||''}; c.pay={}; c.method='rech'; c.done=true; rechOpen=id; mixOpen=null; }
-      else { c.rech={tipo:'parcial', monto:prev.tipo==='parcial'?prev.monto:0, motivo:prev.motivo||''}; if(c.method==='rech') c.method=null; c.done=true; rechOpen=id; resync(c); }
+      else { c.rech={tipo:'parcial', monto:prev.tipo==='parcial'?prev.monto:0, motivo:prev.motivo||''}; if(c.method==='rech') c.method=null; c.done=true; rechOpen=id; resync(c); mixRecalc(c); }
       break; }
     case 'rechok': if(c.rech && c.rech.tipo==='parcial' && !(c.rech.monto>0)) c.rech=null; rechOpen=null; if(c.rech && c.rech.tipo==='total') sel=null; break;
     case 'mixok': mixOpen=null; sel=null; break;
@@ -794,9 +815,26 @@ document.addEventListener('input', e=>{
   const c = get(e.target.dataset.id); if(!c) return;
   if(f==='total'){ c.total = num(e.target.value); if(c.rech && c.rech.tipo==='total') c.rech.monto = c.total;
     resync(c); save(); }
-  if(f==='mix'){ c.pay[e.target.dataset.k] = num(e.target.value);
-    const r=$('#mixrest-'+c.id); if(r) r.textContent = restTxt(debe(c)-sum(c)); save(); }
-  if(f==='rmonto'){ if(c.rech){ c.rech.monto = num(e.target.value); resync(c); } const r=$('#mixrest-'+c.id); if(r) r.textContent = restTxt(debe(c)-sum(c)); save(); }
+  const refrescar = ()=>{
+    const r=$('#mixrest-'+c.id); if(r) r.textContent = restTxt(debe(c)-sum(c));
+    (mixSel[c.id]||[]).forEach(k=>{ const i=document.querySelector(`input[data-f=mix][data-k=${k}][data-id="${c.id}"]`); if(i && i!==document.activeElement) i.value = fmtInput(c.pay[k]); });
+  };
+  if(f==='mix'){
+    const k = e.target.dataset.k, sel = mixSel[c.id] || [];
+    c.pay[k] = num(e.target.value);
+    if(k===sel[sel.length-1]) mixManual[c.id] = true;   // si edita el resto automático, pasa a manual
+    else mixRecalc(c);
+    refrescar(); save();
+  }
+  if(f==='rmonto' || f==='rresto'){
+    if(c.rech){
+      const v = num(e.target.value);
+      c.rech.monto = Math.min(c.total, Math.max(0, f==='rmonto' ? v : r2(c.total - v)));
+      const otro = document.querySelector(`input[data-f=${f==='rmonto'?'rresto':'rmonto'}][data-id="${c.id}"]`);
+      if(otro) otro.value = fmtInput(f==='rmonto' ? r2(c.total-c.rech.monto) : c.rech.monto);
+      resync(c); mixRecalc(c); refrescar(); save();
+    }
+  }
   if(f==='rmotivo'){ if(c.rech) c.rech.motivo = e.target.value; save(); }
 });
 
