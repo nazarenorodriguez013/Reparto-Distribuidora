@@ -114,8 +114,7 @@ header #menubtn{font-size:24px;padding:4px 14px;background:rgba(255,255,255,.2)}
     <button class="btn" id="avisook" style="width:100%">Cerrar</button>
   </div></div>
 <div id="reporte"></div>
-<input type="file" id="respfile" accept=".json,application/json" hidden>
-<div id="menu"><button id="histbtn">Historial</button><button id="cfgbtn">Configuración</button><button id="reset">Nueva planilla</button><button id="bkpbtn">Descargar respaldo</button><button id="rstbtn">Cargar respaldo</button><button id="logout">Salir</button></div>
+<div id="menu"><button id="histbtn">Historial</button><button id="cfgbtn">Configuración</button><button id="reset">Nueva planilla</button><button id="logout">Salir</button></div>
 <div id="syncmsg" class="hint" style="display:none;margin:8px 12px"></div>
 <main id="app"></main>
 <input type="file" id="foto" accept="image/*" capture="environment" hidden>
@@ -528,24 +527,6 @@ async function descargarRespaldo(conHistorial){
   guardarArchivo(nombre, JSON.stringify(datos,null,1));
   aviso(`Respaldo descargado: ${nombre} (${S.clients.length} clientes${datos.historial?` + ${datos.historial.length} planillas del historial`:''}). Buscalo en Descargas.`);
 }
-document.addEventListener('change', e=>{
-  if(e.target.id!=='respfile' || !e.target.files[0]) return;
-  const f = e.target.files[0]; e.target.value = '';
-  f.text().then(txt=>{
-    let d; try{ d = JSON.parse(txt); }catch(_){ d = null; }
-    const cl = d && d.app==='reparto-nestle' && d.actual && Array.isArray(d.actual.clients) ? d.actual.clients : null;
-    if(!cl){ alert('Ese archivo no es un respaldo de Reparto Nestle.'); return; }
-    const fecha = d.fecha ? new Date(d.fecha).toLocaleString('es-AR') : 'fecha desconocida';
-    if(!confirm(`Respaldo del ${fecha}: ${cl.length} clientes.\n\nEsto reemplaza la planilla que tenés ahora${S.clients.length?' (antes se descarga un respaldo de la actual)':''}. ¿Seguir?`)) return;
-    (async()=>{
-      if(S.clients.length) await descargarRespaldo(false);
-      S.clients = cl.map(c=>({ id:c.id||uid(), name:String(c.name||''), addr:String(c.addr||''), total:Number(c.total)||0, pay:c.pay||{}, rech:c.rech||null, done:!!c.done, method:c.method||null }));
-      S.pid = null; S.tab = 'planilla'; ordering=null; sel=null; mixOpen=null; editId=null;
-      render(); aviso(`Respaldo cargado: ${S.clients.length} clientes.`);
-    })();
-  }).catch(()=>alert('No se pudo leer el archivo.'));
-});
-
 function exportarPDF(){ imprimir(buildReporte(), 'Reparto Nestle'); }
 function vResumen(){
   if(!S.clients.length) return '<div class="card">No hay datos todavía.</div>';
@@ -614,8 +595,6 @@ document.addEventListener('click', e=>{
   if(nav){ S.tab=nav.dataset.t; mixOpen=null; ordering=null; editId=null; return render(); }
   if(e.target.id==='cfgbtn'){ S.tab='config'; mixOpen=null; rechOpen=null; sel=null; render(); return; }
   if(e.target.id==='histbtn'){ S.tab='historial'; mixOpen=null; rechOpen=null; sel=null; loadHist(); return; }
-  if(e.target.id==='bkpbtn'){ descargarRespaldo(true); return; }
-  if(e.target.id==='rstbtn'){ $('#respfile').click(); return; }
   if(e.target.id==='reset'){
     const sinGuardar = S.clients.length && (!S.pid || dbOff);
     const msg = sinGuardar
