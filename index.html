@@ -238,6 +238,7 @@ async function asegurarEnviado(){ if(sinEnviar) await syncSave(); return !sinEnv
 
 // JSON con las claves ordenadas: la base devuelve los objetos con otro orden de claves
 const canon = o => Array.isArray(o) ? '['+o.map(canon).join(',')+']' : (o && typeof o==='object') ? '{'+Object.keys(o).sort().map(k=>JSON.stringify(k)+':'+canon(o[k])).join(',')+'}' : JSON.stringify(o);
+const sinOrd = arr => (arr||[]).map(({ord, ...resto}) => resto);   // 'ord' lo agrega la versión nueva; no cuenta como cambio
 // Sube lo que quedó sin enviar y los datos que versiones anteriores guardaron en el navegador.
 async function subirPendientes(){
   const o = outboxGet();
@@ -248,7 +249,7 @@ async function subirPendientes(){
   outboxClear();
   if(LEGACY && Array.isArray(LEGACY.clients) && LEGACY.clients.length){
     let subir = true;
-    if(LEGACY.pid){ try{ const d = await api('GET','/api/planillas/'+LEGACY.pid); subir = canon(d.data.clients) !== canon(LEGACY.clients); if(!subir && !S.pid) S.pid = LEGACY.pid; }catch(e){ if(e.status!==404) throw e; } }
+    if(LEGACY.pid){ try{ const d = await api('GET','/api/planillas/'+LEGACY.pid); subir = canon(sinOrd(d.data.clients)) !== canon(sinOrd(LEGACY.clients)); if(!subir && !S.pid) S.pid = LEGACY.pid; }catch(e){ if(e.status!==404) throw e; } }
     if(subir){ const r = await api('POST','/api/planillas',{clients:LEGACY.clients}); if(!S.pid || !LEGACY.pid) S.pid = r.id; }
     try{ localStorage.removeItem(KEY); }catch(e){}
   }
