@@ -1,6 +1,10 @@
 {
-  "name": "reparto",
+  "name": "reparto-nestle",
+  "version": "1.0.0",
+  "description": "App web para repartidores: planilla de reparto, recorrido, cobros y resumen.",
   "private": true,
+  "license": "MIT",
+  "author": "Rodriguez Nazareno",
   "scripts": {
     "start": "node server.js",
     "test": "node --test"
@@ -10,6 +14,5 @@
   },
   "dependencies": {
     "pg": "^8.23.1"
-  },
-  "version": "1.0.0"
+  }
 }

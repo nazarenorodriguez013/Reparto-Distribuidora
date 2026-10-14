@@ -257,7 +257,7 @@ function render(){
 function vLogin(){
   return `<div class="lg">
     <div class="logo">🚚</div>
-    <h1>Reparto Nestle</h1><p>Ingresá para continuar</p>
+    <h1>Reparto Nestlé</h1><p>Ingresá para continuar</p>
     <div class="box">
       <label for="l_user">Usuario</label>
       <input id="l_user" autocapitalize="none" autocomplete="username" value="${esc(loginUser)}" style="margin-bottom:14px">
@@ -432,7 +432,7 @@ function pendientesHTML(){
 }
 function buildPendientes(){
   const hoy = new Date().toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'});
-  return `<h1>Reparto Nestle</h1>
+  return `<h1>Reparto Nestlé</h1>
   <div>Pendientes a cobrar · Fecha: ${hoy}${USERNAME?' · Usuario: '+esc(USERNAME):''} · Visitados ${S.clients.filter(x=>x.done).length} de ${S.clients.length}</div>
   ${pendientesHTML()}`;
 }
@@ -443,7 +443,7 @@ function imprimir(html, nombre){
   window.addEventListener('afterprint', ()=>{ document.title = prev; }, {once:true});
   window.print();
 }
-function exportarPendientes(){ imprimir(buildPendientes(), 'Reparto Nestle pendientes'); }
+function exportarPendientes(){ imprimir(buildPendientes(), 'Reparto Nestlé pendientes'); }
 function buildReporte(){
   const t = totals(), c = porPlanilla(S.clients);
   const cobrado = t.ef+t.tr+t.ch+t.ec;
@@ -460,7 +460,7 @@ function buildReporte(){
   const rechazados = c.filter(x=>x.rech && rechMonto(x)>0);
   const fila = (a,b) => `<tr><td>${a}</td><td class="r">${money(b)}</td></tr>`;
   const pendHTML = pendientesHTML();
-  return `<h1>Reparto Nestle</h1>
+  return `<h1>Reparto Nestlé</h1>
   <div>Fecha: ${hoy}${USERNAME?' · Usuario: '+esc(USERNAME):''} · Visitados ${c.filter(x=>x.done).length} de ${c.length}</div>
   <h2>Pedidos</h2>
   <table><tr class="tot"><td>Total de todos los pedidos</td><td class="r">${money(t.total)}</td></tr>
@@ -480,7 +480,7 @@ function buildReporte(){
     <tr class="tot"><td colspan="2">Total rechazado</td><td class="r">${money(t.rechT+t.rechP)}</td></tr></table>`:''}
   ${pendHTML}`;
 }
-function exportarPDF(){ imprimir(buildReporte(), 'Reparto Nestle'); }
+function exportarPDF(){ imprimir(buildReporte(), 'Reparto Nestlé'); }
 function vResumen(){
   if(!S.clients.length) return '<div class="card">No hay datos todavía.</div>';
   const t = totals();

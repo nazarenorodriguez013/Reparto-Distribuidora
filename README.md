@@ -1,4 +1,4 @@
-# Reparto Nestle
+# Reparto Nestlé
 
 App web para repartidores, pensada para usar desde el celular. Se carga la planilla de reparto (a mano o con una foto), se arma el orden del recorrido, se marca cómo pagó cada cliente y al final se obtiene el resumen de lo que tiene que haber.
 
@@ -58,3 +58,9 @@ sw.js           service worker (instalable y abre sin señal)
 test/           pruebas automáticas
 manifest.json   datos de la app instalable, junto con los íconos
 ```
+
+## Licencia
+
+[MIT](LICENSE) © 2026 Rodriguez Nazareno.
+
+Proyecto independiente, sin relación oficial con Nestlé S.A.: "Nestlé" se usa solo como nombre descriptivo del uso que se le da a la app. La licencia cubre el código, no marcas de terceros.
