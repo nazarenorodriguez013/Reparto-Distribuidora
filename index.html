@@ -252,6 +252,7 @@ async function cargarServidor(){
     else if(d && d.id){ S.pid = d.id; S.clients = d.data.clients || []; enviado = instantanea(); }
     else { S.pid = null; S.clients = []; enviado = instantanea(); }
     conectado = true; listo = true; sinEnviar = false; setSync('');
+    normalizarOrden();
     if(enviado==='') scheduleSync();
   }catch(e){
     if(e.status!==401){
@@ -360,9 +361,18 @@ const num = v => { v=String(v).trim().replace(/\./g,'').replace(',','.'); const 
 const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const get = id => S.clients.find(c=>c.id===id);
 
+// ord = lugar en la planilla original (el orden en que se cargó). El orden del recorrido se puede cambiar; este no.
 function addClient(name, total, addr){
-  S.clients.push({id:uid(), name:name.trim(), addr:(addr||'').trim(), total:total||0, pay:{}, done:false});
+  const ord = S.clients.reduce((m,c)=>Math.max(m,c.ord||0),0) + 1;
+  S.clients.push({id:uid(), ord, name:name.trim(), addr:(addr||'').trim(), total:total||0, pay:{}, done:false});
 }
+// Planillas anteriores sin ord: se numera según el orden que tengan ahora y desde ahí queda fijo.
+function normalizarOrden(){
+  let max = S.clients.reduce((m,c)=>Math.max(m,c.ord||0),0), cambio = false;
+  S.clients.forEach(c=>{ if(!c.ord){ c.ord = ++max; cambio = true; } });
+  if(cambio) scheduleSync();
+}
+const porPlanilla = arr => [...arr].sort((a,b)=>(a.ord||0)-(b.ord||0));
 
 /* ---------- Render ---------- */
 // Aviso que se muestra una sola vez por dispositivo (se cierra y no vuelve a aparecer).
@@ -537,7 +547,7 @@ function totals(){
   return t;
 }
 function pendientesHTML(){
-  const c = S.clients;
+  const c = porPlanilla(S.clients);
   // pendientes separados por tipo; un cliente puede estar en más de un grupo (cada uno con su monto)
   const g = {fi:[],cc:[],sin:[],nv:[]};
   c.forEach(x=>{
@@ -572,7 +582,7 @@ function imprimir(html, nombre){
 }
 function exportarPendientes(){ imprimir(buildPendientes(), 'Reparto Nestle pendientes'); }
 function buildReporte(){
-  const t = totals(), c = S.clients;
+  const t = totals(), c = porPlanilla(S.clients);
   const cobrado = t.ef+t.tr+t.ch+t.ec;
   const hoy = new Date().toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'});
   const medios = x => KEYS.filter(k=>(x.pay[k]||0)>0).map(k=>`${LABEL[k]} ${money(x.pay[k])}`).join(' · ');
@@ -702,7 +712,7 @@ document.addEventListener('click', e=>{
     case 'color': applyColor(el.dataset.c); break;
     case 'hist-open': (async()=>{
       if(!await asegurarEnviado()){ alert('Hay cambios que todavía no se enviaron al servidor (sin señal). Esperá a que se envíen.'); return; }
-      try{ const d = await api('GET','/api/planillas/'+id); S.pid=d.id; S.clients=d.data.clients||[]; S.tab='planilla'; enviado=instantanea(); render(); }
+      try{ const d = await api('GET','/api/planillas/'+id); S.pid=d.id; S.clients=d.data.clients||[]; S.tab='planilla'; enviado=instantanea(); normalizarOrden(); render(); }
       catch(e){ if(e.status!==401) setSync('No se pudo abrir la planilla.', true); }
     })(); return;
     case 'hist-del': if(!confirm('¿Borrar esta planilla del historial?')) return;
