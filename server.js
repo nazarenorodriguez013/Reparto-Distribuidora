@@ -6,11 +6,11 @@ const crypto = require('crypto');
 const { Pool } = require('pg');
 const leer = require('./api/leer.js');
 
-// Usuario inicial (solo se usa para crear el primer administrador cuando la tabla de usuarios está vacía,
-// o como único usuario si no hay base de datos conectada).
+// Usuario inicial: se usa para crear el primer administrador cuando la tabla de usuarios está vacía,
+// o como único usuario si no hay base de datos conectada. No hay valores por defecto en el código.
 const USER = process.env.APP_USER || '';
 const PASS = process.env.APP_PASS || '';
-let SECRET = process.env.AUTH_SECRET || 'reparto-netle-' + PASS;
+let SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32).toString('hex');
 const sign = t => crypto.createHmac('sha256', SECRET).update(t).digest('hex');
 const same = (a, b) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const scrypt = (pw, salt) => new Promise((ok, ko) => crypto.scrypt(pw, salt, 64, (e, k) => e ? ko(e) : ok(k)));
@@ -22,6 +22,7 @@ const makeToken = u => {
   return p + '.' + sign(p);
 };
 const ENV_USER = { id: 0, nombre: USER, es_admin: true, pass_hash: 'env:' + PASS };
+const ENV_CONFIGURADO = !!(USER && PASS);
 
 const E = process.env;
 const DB_URL = E.DATABASE_URL || E.DATABASE_PRIVATE_URL || E.DATABASE_PUBLIC_URL ||
@@ -44,7 +45,12 @@ const dbReady = pool ? (async () => {
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS usuarios_nombre_idx ON usuarios (lower(nombre))');
   await pool.query('CREATE TABLE IF NOT EXISTS config (clave TEXT PRIMARY KEY, valor TEXT NOT NULL)');
   const n = (await pool.query('SELECT count(*)::int AS n FROM usuarios')).rows[0].n;
-  if (!n) await pool.query('INSERT INTO usuarios (nombre, pass_hash, es_admin) VALUES ($1,$2,true) ON CONFLICT DO NOTHING', [USER, await hashPass(PASS)]);
+  if (!n) {
+    // primer arranque: administrador de APP_USER/APP_PASS o, si no están definidos, uno con contraseña aleatoria (se muestra una sola vez en el log)
+    const nombre = USER || 'admin', clave = PASS || crypto.randomBytes(9).toString('base64url');
+    await pool.query('INSERT INTO usuarios (nombre, pass_hash, es_admin) VALUES ($1,$2,true) ON CONFLICT DO NOTHING', [nombre, await hashPass(clave)]);
+    if (!PASS) console.log(`Usuario inicial creado: ${nombre} / contraseña temporal: ${clave} (cambiala en Configuración)`);
+  }
   await pool.query("INSERT INTO config (clave, valor) VALUES ('secret', $1) ON CONFLICT DO NOTHING", [crypto.randomBytes(32).toString('hex')]);
   if (!process.env.AUTH_SECRET) SECRET = (await pool.query("SELECT valor FROM config WHERE clave='secret'")).rows[0].valor;
   modo = 'db';
@@ -98,7 +104,10 @@ async function login(req, res) {
   if (dbReady) await dbReady;
   if (modo === 'error' || modo === 'pendiente') return send(res, 503, { error: 'El servidor no pudo conectarse a la base de datos. Probá de nuevo en un minuto.' });
   let u = null;
-  if (modo === 'env') { if (nombre && same(nombre, USER) && same(pass, PASS)) u = ENV_USER; }
+  if (modo === 'env') {
+    if (!ENV_CONFIGURADO) return send(res, 503, { error: 'El servidor no tiene usuario configurado.' });
+    if (nombre && same(nombre, USER) && same(pass, PASS)) u = ENV_USER;
+  }
   else {
     const r = await pool.query('SELECT id, nombre, es_admin, pass_hash FROM usuarios WHERE lower(nombre)=lower($1)', [nombre]);
     if (r.rows[0] && await checkPass(pass, r.rows[0].pass_hash)) u = r.rows[0];
