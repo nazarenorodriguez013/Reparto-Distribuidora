@@ -132,7 +132,22 @@ test('con base de datos', { skip: !DB && 'definí TEST_DATABASE_URL para correr 
       assert.equal((await sv.llamar('DELETE', `/api/planillas/${a.id}`, null, tk))[0], 200);
     });
 
+    await t.test('por defecto las planillas son compartidas (como siempre) y la última es la última con clientes', async () => {
+      const [, ana] = await sv.llamar('POST', '/api/login', { user: 'ana', pass: 'nueva-clave-1' });
+      const [, yo] = await sv.llamar('GET', '/api/yo', null, tk);
+      assert.equal(yo.compartidas, true);
+      const [, conDatos] = await sv.llamar('POST', '/api/planillas', { clients: [{ name: 'Compartida', total: 7 }] }, tk);
+      await sv.llamar('POST', '/api/planillas', { clients: [] }, tk);   // una vacía más reciente no debe tapar a la que tiene datos
+      assert.equal((await sv.llamar('GET', `/api/planillas/${conDatos.id}`, null, ana.token))[0], 200, 'Ana ve lo del administrador');
+      const [, ultima] = await sv.llamar('GET', '/api/planillas/ultima', null, ana.token);
+      assert.equal(ultima.id, conDatos.id);
+      assert.equal((await sv.llamar('PUT', `/api/planillas/${conDatos.id}`, { clients: [{ name: 'Compartida', total: 8 }] }, ana.token))[0], 200, 'y puede editarla');
+      assert.equal((await sv.llamar('PUT', '/api/ajustes', { compartidas: false }, ana.token))[0], 403, 'solo el administrador cambia el ajuste');
+      assert.equal((await sv.llamar('PUT', '/api/ajustes', { compartidas: 'no' }, tk))[0], 400);
+    });
+
     await t.test('planillas por usuario: cada uno ve solo las suyas; el administrador ve todas', async () => {
+      assert.equal((await sv.llamar('PUT', '/api/ajustes', { compartidas: false }, tk))[0], 200);   // modo "cada usuario ve las suyas"
       const [, ana] = await sv.llamar('POST', '/api/login', { user: 'ana', pass: 'nueva-clave-1' });
       const [, deAdmin] = await sv.llamar('POST', '/api/planillas', { clients: [{ name: 'Del admin', total: 1 }] }, tk);
       const [, deAna] = await sv.llamar('POST', '/api/planillas', { clients: [{ name: 'De Ana', total: 2 }] }, ana.token);
@@ -148,6 +163,7 @@ test('con base de datos', { skip: !DB && 'definí TEST_DATABASE_URL para correr 
       assert.ok([deAdmin.id, deAna.id].every(i => listaAdmin.planillas.some(p => p.id === i)), 'el administrador ve todas');
       assert.equal(listaAdmin.planillas.find(p => p.id === deAna.id).usuario, 'ana');
       assert.equal((await sv.llamar('GET', `/api/planillas/${deAna.id}`, null, tk))[0], 200, 'y puede abrir las de otros');
+      assert.equal((await sv.llamar('PUT', '/api/ajustes', { compartidas: true }, tk))[0], 200);
     });
 
     await t.test('fotos: negativos, límite por usuario y sin filtrar errores internos', async () => {

@@ -43,7 +43,7 @@ Corre las pruebas de la lógica de importes y del servidor (login, usuarios, pla
 
 - La lectura de fotos tiene un tope de **3 fotos cada 10 minutos** (lo controla el servidor).
 - Las contraseñas se guardan con hash (scrypt), nunca en texto, y las sesiones duran 30 días. Cambiar la contraseña cierra las sesiones abiertas de ese usuario.
-- Cada usuario ve y edita solo sus planillas; el administrador puede ver y abrir todas.
+- Por defecto todos los usuarios ven y editan las mismas planillas. El administrador puede cambiarlo en *Configuración* para que cada usuario vea solo las suyas (el administrador ve todas).
 
 ## Estructura
 

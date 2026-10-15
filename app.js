@@ -192,6 +192,10 @@ function cfgCuentas(){
     <input id="c_pn2" type="password" autocomplete="new-password" placeholder="Repetir contraseña nueva" style="margin-top:8px">
     <div class="row" style="margin-top:10px"><button class="btn" data-a="cfg-pass">Cambiar contraseña</button></div>
   </div>
+  ${cfg.yo.admin ? `<div class="card"><h2>Planillas</h2>
+    <div class="mut" style="margin-bottom:10px">${cfg.yo.compartidas ? 'Todos los usuarios ven y editan las mismas planillas.' : 'Cada usuario ve solo sus planillas. El administrador ve todas.'}</div>
+    <button class="btn sec" style="width:100%" data-a="cfg-compartidas">${cfg.yo.compartidas ? 'Separar: que cada usuario vea las suyas' : 'Compartir: que todos vean las mismas'}</button>
+  </div>` : ''}
   ${cfg.yo.admin && cfg.usuarios ? `<div class="card"><h2>Usuarios (${cfg.usuarios.length})</h2>
     ${cfg.usuarios.map(u=>`<div class="item" style="flex-wrap:wrap"><div class="nm"><b>${esc(u.nombre)}</b></div>${u.admin?'<span class="tag ok">Admin</span>':''}
       <button class="btn sec sm" style="padding:0 10px" data-a="cfg-reset" data-id="${u.id}" data-n="${esc(u.nombre)}">Contraseña</button>
@@ -568,6 +572,7 @@ document.addEventListener('click', e=>{
       const pn = $('#c_pn').value;
       if(pn !== $('#c_pn2').value){ cfg.msg=''; cfg.err='Las contraseñas nuevas no coinciden.'; render(); return; }
       cfgRun(async()=>{ const d = await api('PUT','/api/yo',{passActual:$('#c_pa').value, passNueva:pn}); setSesion(d.token, d.user.nombre); }, 'Contraseña cambiada.'); return; }
+    case 'cfg-compartidas': cfgRun(async()=>{ const d = await api('PUT','/api/ajustes',{compartidas:!cfg.yo.compartidas}); cfg.yo = {...cfg.yo, compartidas:d.compartidas}; }, 'Ajuste guardado.'); return;
     case 'cfg-add': cfgRun(async()=>{ await api('POST','/api/usuarios',{nombre:$('#c_un').value, pass:$('#c_up').value}); await loadCfgLista(); }, 'Usuario agregado.'); return;
     case 'cfg-reset': { const n = prompt('Nueva contraseña para '+el.dataset.n+' (mínimo 6 caracteres):'); if(!n) return;
       cfgRun(async()=>{ await api('PUT','/api/usuarios/'+id+'/pass',{pass:n}); }, 'Contraseña de '+el.dataset.n+' actualizada.'); return; }

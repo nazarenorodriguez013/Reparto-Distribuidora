@@ -110,6 +110,12 @@ function body(req, limit = 15e6) {
   });
 }
 
+// Ajuste del administrador: por defecto las planillas son compartidas (todos ven las mismas, como siempre);
+// si se desactiva, cada usuario ve solo las suyas.
+async function planillasCompartidas() {
+  const r = await pool.query("SELECT valor FROM config WHERE clave='compartidas'");
+  return !r.rows[0] || r.rows[0].valor !== '0';
+}
 const NOMBRE_OK = /^[\p{L}\p{N}._-]{3,30}$/u;
 const publico = u => ({ id: u.id, nombre: u.nombre, admin: !!u.es_admin });
 async function usuarioPorId(id) {
@@ -158,7 +164,7 @@ async function login(req, res) {
 
 async function cuentas(req, res, url, yo) {
   const sinDb = () => send(res, 503, { error: 'Disponible cuando la base de datos esté conectada.' });
-  if (url === '/api/yo' && req.method === 'GET') return send(res, 200, { ...publico(yo), gestion: modo === 'db' });
+  if (url === '/api/yo' && req.method === 'GET') return send(res, 200, { ...publico(yo), gestion: modo === 'db', compartidas: modo === 'db' ? await planillasCompartidas() : true });
   if (modo !== 'db') return sinDb();
   const dup = e => e.code === '23505' ? send(res, 409, { error: 'Ya existe un usuario con ese nombre.' }) : Promise.reject(e);
   if (url === '/api/yo' && req.method === 'PUT') {
@@ -178,6 +184,12 @@ async function cuentas(req, res, url, yo) {
     return send(res, 200, { user: publico(u), token: makeToken(u) });
   }
   if (!yo.es_admin) return send(res, 403, { error: 'Solo el administrador puede gestionar usuarios.' });
+  if (url === '/api/ajustes' && req.method === 'PUT') {
+    const b = await body(req, 1e3);
+    if (typeof b.compartidas !== 'boolean') return send(res, 400, { error: 'Dato inválido.' });
+    await pool.query("INSERT INTO config (clave, valor) VALUES ('compartidas', $1) ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor", [b.compartidas ? '1' : '0']);
+    return send(res, 200, { compartidas: b.compartidas });
+  }
   if (url === '/api/usuarios' && req.method === 'GET') {
     const r = await pool.query('SELECT id, nombre, es_admin FROM usuarios ORDER BY id');
     return send(res, 200, { usuarios: r.rows.map(x => ({ id: x.id, nombre: x.nombre, admin: x.es_admin })) });
@@ -213,7 +225,9 @@ async function planillas(req, res, url, yo) {
   if (!m) return send(res, 404, { error: 'No encontrado' });
   const id = m[1];
   const admin = !!yo.es_admin;
-  const acceso = admin ? '$1::int IS NOT NULL' : 'p.usuario_id = $1';   // $1 = id del usuario (el administrador ve todas)
+  const compartidas = await planillasCompartidas();
+  // $1 = id del usuario. Compartidas: todos ven todo. Por usuario: cada uno ve las suyas y el administrador todas.
+  const acceso = (compartidas || admin) ? '$1::int IS NOT NULL' : 'p.usuario_id = $1';
   if (!id && req.method === 'GET') {
     const r = await pool.query(`SELECT p.id, p.created_at, p.updated_at, u.nombre AS usuario,
       jsonb_array_length(p.data->'clients') AS clientes,
@@ -230,7 +244,8 @@ async function planillas(req, res, url, yo) {
     return send(res, 200, { id: r.rows[0].id, version: r.rows[0].version });
   }
   if (id === 'ultima' && req.method === 'GET') {
-    const r = await pool.query('SELECT p.id, p.data, p.version FROM planillas p WHERE p.usuario_id = $1 ORDER BY p.id DESC LIMIT 1', [yo.id]);
+    // la última planilla con clientes (si todas están vacías, la más reciente); en modo por usuario, solo entre las propias
+    const r = await pool.query(`SELECT p.id, p.data, p.version FROM planillas p WHERE ${compartidas ? '$1::int IS NOT NULL' : 'p.usuario_id = $1'} ORDER BY (jsonb_array_length(p.data->'clients') > 0) DESC, p.id DESC LIMIT 1`, [yo.id]);
     return send(res, 200, r.rows[0] || {});
   }
   if (id && req.method === 'GET') {
@@ -268,7 +283,7 @@ const servidor = http.createServer(async (req, res) => {
       try { yo = await authUser(req.headers.authorization); }
       catch (e) { console.error(e); return send(res, 503, { error: 'Sin conexión con la base de datos.' }); }
       if (!yo) return send(res, 401, { error: 'No autorizado' });
-      if (url === '/api/yo' || url.startsWith('/api/usuarios')) return await cuentas(req, res, url, yo);
+      if (url === '/api/yo' || url === '/api/ajustes' || url.startsWith('/api/usuarios')) return await cuentas(req, res, url, yo);
       if (url === '/api/leer') {
         req.body = await body(req);
         const est = fotosEstado(yo.id);
