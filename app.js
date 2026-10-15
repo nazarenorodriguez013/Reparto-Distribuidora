@@ -1,4 +1,4 @@
-const { KEYS, r2, num, money, fmtInput, sum, rechMonto, debe, norm, sameKey, dedupe, canon, sinOrd, porPlanilla, limpiarClientes } = Logic;
+const { fusionar, KEYS, r2, num, money, fmtInput, sum, rechMonto, debe, norm, sameKey, dedupe, canon, sinOrd, porPlanilla, limpiarClientes } = Logic;
 const METHODS = [
   ['ef','Efectivo'],['tr','Transferencia'],['ch','Cheque'],
   ['ec','E-Cheq'],['cc','Cuenta corriente'],['fi','Firmado'],['mix','Pago mixto']
@@ -34,6 +34,20 @@ let dupMsg = '';
 let manual = {name:'',addr:'',total:''};   // formulario de carga manual
 let photoRows = [];               // clientes leídos de la foto, por revisar
 let pedi = null;                  // fila de la foto abierta para editar
+// Lo que todavía no se agregó a la lista (leído de la foto, o escrito en el formulario) se conserva si el celular recarga la página,
+// por ejemplo al volver de la cámara o la galería. No es la planilla: se borra apenas se agrega.
+const DRAFT = 'reparto-borrador';
+try{
+  const d = JSON.parse(localStorage.getItem(DRAFT) || 'null');
+  if(d && Array.isArray(d.photoRows)) photoRows = d.photoRows.slice(0,100).map(r=>({name:String(r.name||''), addr:String(r.addr||''), total:String(r.total||''), warn:!!r.warn}));
+  if(d && d.manual) manual = {name:String(d.manual.name||''), addr:String(d.manual.addr||''), total:String(d.manual.total||'')};
+}catch(e){}
+function borradorGuardar(){
+  try{
+    if(photoRows.length || manual.name || manual.addr || manual.total) localStorage.setItem(DRAFT, JSON.stringify({photoRows, manual}));
+    else localStorage.removeItem(DRAFT);
+  }catch(e){}
+}
 let leyendo = '';
 
 function save(){
@@ -42,9 +56,12 @@ function save(){
 }
 
 /* ---------- Servidor (base de datos): es la única copia de las planillas ---------- */
-let conflictoHasta = 0;
+let conflictoHasta = 0, conflictoMsg = '';
 let syncTimer = null, syncing = false, syncAgain = false, hist = null, enviado = '', sinEnviar = false, cargando = false, cargaTimer = null;
 const instantanea = () => JSON.stringify([S.pid, S.clients]);
+let base = [];   // clientes tal como estaban en la última sincronización (sirve para combinar con los cambios de otro celular)
+const clonar = x => JSON.parse(JSON.stringify(x));
+function marcarEnviado(){ enviado = instantanea(); base = clonar(S.clients); }
 function setSync(msg, rojo){ const el=$('#syncmsg'); el.textContent=msg; el.style.display=msg?'':'none'; el.style.background=rojo?'#fee2e2':''; el.style.color=rojo?'#7f1d1d':''; }
 function outboxGet(){ try{ return JSON.parse(localStorage.getItem(OUT)); }catch(e){ return null; } }
 function outboxClear(){ try{ localStorage.removeItem(OUT); }catch(e){} }
@@ -52,7 +69,7 @@ function outboxClear(){ try{ localStorage.removeItem(OUT); }catch(e){} }
 function scheduleSync(){
   if(!TOKEN || !listo || instantanea()===enviado) return;
   sinEnviar = true;
-  try{ localStorage.setItem(OUT, JSON.stringify({pid:S.pid, ver:S.ver, clients:S.clients})); }catch(e){}
+  try{ localStorage.setItem(OUT, JSON.stringify({pid:S.pid, ver:S.ver, base, clients:S.clients})); }catch(e){}
   if(!conectado) return;
   clearTimeout(syncTimer); syncTimer = setTimeout(syncSave, 300);
 }
@@ -65,23 +82,46 @@ async function api(method, url, data){
 }
 const MSG_SIN_SENAL = '⚠ Sin conexión: los últimos cambios todavía NO están en el servidor. Se envían solos cuando vuelva la señal.';
 const MSG_CONFLICTO = 'Otro celular modificó esta planilla al mismo tiempo. Tus cambios se guardaron como una planilla nueva; la otra versión está en el Historial.';
+const MSG_FUSION = 'Otro celular cambió esta planilla al mismo tiempo: se combinaron los cambios de los dos.';
+async function fusionarConServidor(pid, baseArr, localArr){
+  for(let i=0;i<3;i++){
+    const rem = await api('GET','/api/planillas/'+pid);          // 404 si la borraron: lo decide quien llama
+    const remoto = limpiarClientes(rem.data.clients).clients;
+    const fusion = fusionar(baseArr, localArr, remoto);
+    try{ const r = await api('PUT','/api/planillas/'+pid,{clients:fusion, version:rem.version}); return {clients:fusion, version:r.version}; }
+    catch(e){ if(e.status!==409) throw e; }
+  }
+  throw Object.assign(new Error('conflicto'),{status:409});
+}
 const MSG_SIN_BASE = '⚠ La base de datos no está conectada: los cambios NO se están guardando en el servidor.';
 async function syncSave(){
   clearTimeout(syncTimer); syncTimer = null;
   if(!TOKEN || !listo || !conectado || cargando) return;
   if(syncing){ syncAgain = true; return; }
-  syncing = true; let ok = false, conflicto = false;
+  syncing = true; let ok = false, conflicto = '', pendiente = false;
   try{
     if(!S.pid){ if(S.clients.length){ const r = await api('POST','/api/planillas',{clients:S.clients}); S.pid = r.id; S.ver = r.version; } }
     else {
       try{ const r = await api('PUT','/api/planillas/'+S.pid,{clients:S.clients, version:S.ver}); S.ver = r.version; }
       catch(e){
-        if(e.status!==409) throw e;   // otro celular guardó antes: no se pisa, los cambios van a una planilla nueva
-        const r = await api('POST','/api/planillas',{clients:S.clients}); S.pid = r.id; S.ver = r.version; conflicto = true;
+        if(e.status!==409) throw e;   // otro celular guardó antes: se combinan los cambios de los dos
+        const antes = JSON.stringify(S.clients), local = JSON.parse(antes);
+        let fus = null;
+        try{ fus = await fusionarConServidor(S.pid, base, local); }
+        catch(e2){ if(e2.status!==404 && e2.status!==409) throw e2; }
+        if(fus){
+          S.ver = fus.version; conflicto = 'fusion';
+          if(JSON.stringify(S.clients)===antes) S.clients = fus.clients;
+          else { S.clients = fusionar(local, S.clients, fus.clients); pendiente = true; }   // lo que se editó mientras tanto se vuelve a enviar
+          base = clonar(fus.clients);
+        } else {   // no se pudo combinar: nada se pierde, los cambios quedan en una planilla nueva
+          const r = await api('POST','/api/planillas',{clients:S.clients}); S.pid = r.id; S.ver = r.version; conflicto = 'copia';
+        }
       }
     }
-    enviado = instantanea(); ok = true; save();
-    if(conflicto){ conflictoHasta = Date.now()+20000; setSync(MSG_CONFLICTO); setTimeout(()=>{ if(Date.now()>=conflictoHasta) setSync(''); }, 20200); }
+    if(pendiente) enviado = ''; else marcarEnviado();
+    ok = true; save();
+    if(conflicto){ conflictoMsg = conflicto==='fusion' ? MSG_FUSION : MSG_CONFLICTO; conflictoHasta = Date.now()+20000; setSync(conflictoMsg); setTimeout(()=>{ if(Date.now()>=conflictoHasta) setSync(''); }, 20200); render(); }
   }catch(e){
     if(e.status!==401){ setSync(e.status===503 ? MSG_SIN_BASE : MSG_SIN_SENAL, true); syncTimer = setTimeout(syncSave, e.status===503 ? 30000 : 5000); }
   }
@@ -89,7 +129,7 @@ async function syncSave(){
   if(ok){
     if(syncAgain){ syncAgain = false; syncSave(); }
     else if(!syncTimer){
-      if(instantanea()===enviado){ sinEnviar = false; outboxClear(); setSync(Date.now()<conflictoHasta ? MSG_CONFLICTO : ''); } else scheduleSync();
+      if(instantanea()===enviado){ sinEnviar = false; outboxClear(); setSync(Date.now()<conflictoHasta ? conflictoMsg : ''); } else scheduleSync();
     }
   } else syncAgain = false;
 }
@@ -101,7 +141,16 @@ async function subirPendientes(){
   if(o && ((o.clients||[]).length || o.pid)){
     const lista = limpiarClientes(o.clients).clients;
     const nueva = async()=>{ const r = await api('POST','/api/planillas',{clients:lista}); S.pid = r.id; S.ver = r.version; };
-    if(o.pid){ try{ const r = await api('PUT','/api/planillas/'+o.pid,{clients:lista, version:o.ver}); S.pid = o.pid; S.ver = r.version; }catch(e){ if(e.status!==404 && e.status!==409) throw e; if(lista.length) await nueva(); } }
+    if(o.pid){
+      try{ const r = await api('PUT','/api/planillas/'+o.pid,{clients:lista, version:o.ver}); S.pid = o.pid; S.ver = r.version; }
+      catch(e){
+        if(e.status!==404 && e.status!==409) throw e;
+        let fus = null;
+        if(e.status===409 && Array.isArray(o.base)){ try{ fus = await fusionarConServidor(o.pid, limpiarClientes(o.base).clients, lista); }catch(e2){ if(e2.status!==404 && e2.status!==409) throw e2; } }
+        if(fus){ S.pid = o.pid; S.ver = fus.version; conflictoMsg = MSG_FUSION; conflictoHasta = Date.now()+20000; }
+        else if(lista.length) await nueva();
+      }
+    }
     else if(lista.length) await nueva();
   }
   outboxClear();
@@ -123,8 +172,8 @@ async function cargarServidor(){
     if(S.pid){ try{ d = await api('GET','/api/planillas/'+S.pid); }catch(e){ if(e.status!==404) throw e; S.pid = null; } }
     if(!d) d = await api('GET','/api/planillas/ultima');
     if(listo && JSON.stringify(S.clients)!==antes){ enviado = ''; }          // se editó durante la carga: no se pisa
-    else if(d && d.id){ S.pid = d.id; S.ver = d.version; S.clients = limpiarClientes(d.data.clients).clients; enviado = instantanea(); }
-    else { S.pid = null; S.ver = null; S.clients = []; enviado = instantanea(); }
+    else if(d && d.id){ S.pid = d.id; S.ver = d.version; S.clients = limpiarClientes(d.data.clients).clients; marcarEnviado(); }
+    else { S.pid = null; S.ver = null; S.clients = []; marcarEnviado(); }
     conectado = true; listo = true; sinEnviar = false; setSync('');
     normalizarOrden();
     if(enviado==='') scheduleSync();
@@ -256,6 +305,7 @@ function render(){
   if(!listo){ $('#app').innerHTML = '<div class="card">Cargando planilla…</div>'; return; }
   $('#app').innerHTML = S.tab==='planilla' ? vPlanilla() : S.tab==='recorrido' ? vRecorrido() : S.tab==='historial' ? vHistorial() : S.tab==='config' ? vConfig() : vResumen();
   save();
+  borradorGuardar();
 }
 
 function vLogin(){
@@ -273,7 +323,7 @@ function vLogin(){
 }
 function logout(){
   TOKEN=null; listo=false; conectado=false; cargando=false; clearTimeout(syncTimer); clearTimeout(cargaTimer); syncTimer=null;
-  S.clients=[]; S.pid=null; S.ver=null; enviado=''; setSync('');   // lo que quedó sin enviar sigue anotado y se sube al volver a entrar
+  S.clients=[]; S.pid=null; S.ver=null; enviado=''; base=[]; setSync('');   // lo que quedó sin enviar sigue anotado y se sube al volver a entrar
   try{ localStorage.removeItem('reparto-token'); }catch(e){} loginErr=''; render();
 }
 async function doLogin(){
@@ -328,7 +378,8 @@ function vPlanilla(){
         <div class="row" style="margin-top:10px"><button class="btn bad" data-a="del" data-id="${x.id}">Borrar</button><button class="btn" data-a="pedit" data-id="${x.id}">Listo ✔</button></div></div>`
       :`<div class="item" data-a="pedit" data-id="${x.id}">
         <div class="nm"><b>${esc(x.name)}</b></div>
-        <b>${money(x.total)}</b></div>`).join(''):'<div class="mut">Todavía no hay clientes.</div>'}
+        <b>${money(x.total)}</b>
+        <button class="btn sec sm" data-a="del" data-id="${x.id}" aria-label="Borrar cliente" style="color:var(--bad)">✕</button></div>`).join(''):'<div class="mut">Todavía no hay clientes.</div>'}
     ${c.length?`<div class="row" style="margin-top:10px"><button class="btn" data-a="go">Empezar recorrido →</button></div>`:''}
   </div>`;
 }
@@ -393,7 +444,7 @@ function vRecorrido(){
     ${c.map((x,k)=>{
       if(sel===x.id) return `<div class="card cur" style="margin:8px 0"><div class="big">${esc(x.name)}</div><div class="mut">${esc(x.addr)}</div>
         <div class="big" style="color:var(--pri)">${money(x.total)}</div>${x.total<0?`<div class="hint">Nota de crédito: es un importe a favor del cliente, no hay nada para cobrar.</div><div class="row"><button class="btn" data-a="ncok" data-id="${x.id}">Marcar como visitado</button></div>`:payButtons(x)}
-        <div class="row"><button class="btn sec" data-a="sel" data-id="${x.id}">Cerrar</button>${mixOpen===x.id?`<button class="btn" data-a="mixok" data-id="${x.id}">Listo ✔</button>`:''}</div></div>`;
+        <div class="row"><button class="btn sec" data-a="sel" data-id="${x.id}">Cerrar</button><button class="btn sec" style="color:var(--bad)" data-a="del" data-id="${x.id}">Borrar cliente</button>${mixOpen===x.id?`<button class="btn" data-a="mixok" data-id="${x.id}">Listo ✔</button>`:''}</div></div>`;
       if(x.done) return `<div class="item done" data-a="sel" data-id="${x.id}"><span class="n ok">✓</span><div class="nm"><b>${esc(x.name)}</b>${statusTag(x)}</div><b>${money(x.total)}</b><button class="btn sec sm pen" data-a="sel" data-id="${x.id}" aria-label="Editar">✎</button></div>`;
       return `<div class="item" data-a="sel" data-id="${x.id}" data-lp="1"><span class="n off">${k+1}</span><div class="nm"><b>${esc(x.name)}</b></div><b>${money(x.total)}</b>
         <button class="btn sec sm" data-a="up" data-id="${x.id}">↑</button><button class="btn sec sm" data-a="down" data-id="${x.id}">↓</button></div>`;
@@ -557,7 +608,7 @@ document.addEventListener('click', e=>{
     (async()=>{
       if(!await asegurarEnviado()){ alert('Hay cambios que todavía no se enviaron al servidor (sin señal). Esperá a que se envíen antes de empezar una planilla nueva.'); return; }
       S.photo=null; S.clients=[]; S.pid=null; S.ver=null; S.tab='planilla'; manual={name:'',addr:'',total:''}; photoRows=[]; pedi=null; ordering=null; mixOpen=null;
-      enviado = instantanea(); render();
+      marcarEnviado(); render();
     })();
     return;
   }
@@ -582,11 +633,11 @@ document.addEventListener('click', e=>{
     case 'color': applyColor(el.dataset.c); break;
     case 'hist-open': (async()=>{
       if(!await asegurarEnviado()){ alert('Hay cambios que todavía no se enviaron al servidor (sin señal). Esperá a que se envíen.'); return; }
-      try{ const d = await api('GET','/api/planillas/'+id); S.pid=d.id; S.ver=d.version; S.clients=limpiarClientes(d.data.clients).clients; S.tab='planilla'; enviado=instantanea(); normalizarOrden(); render(); }
+      try{ const d = await api('GET','/api/planillas/'+id); S.pid=d.id; S.ver=d.version; S.clients=limpiarClientes(d.data.clients).clients; S.tab='planilla'; marcarEnviado(); normalizarOrden(); render(); }
       catch(e){ if(e.status!==401) setSync('No se pudo abrir la planilla.', true); }
     })(); return;
     case 'hist-del': if(!confirm('¿Borrar esta planilla del historial?')) return;
-      api('DELETE','/api/planillas/'+id).then(()=>{ if(+id===S.pid){ S.pid=null; S.ver=null; S.clients=[]; enviado=instantanea(); } loadHist(); }).catch(()=>setSync('No se pudo borrar.')); return;
+      api('DELETE','/api/planillas/'+id).then(()=>{ if(+id===S.pid){ S.pid=null; S.ver=null; S.clients=[]; marcarEnviado(); } loadHist(); }).catch(()=>setSync('No se pudo borrar.')); return;
     case 'madd': {
       if(!manual.name.trim()) return;
       const r = dedupe([manual], S.clients);
@@ -601,7 +652,7 @@ document.addEventListener('click', e=>{
     case 'pr-edit': { const k=+el.dataset.i; if(pedi===k) photoRows[k].warn=false; pedi = pedi===k ? null : k; break; }
     case 'pr-del': photoRows.splice(+el.dataset.i,1); pedi=null; break;
     case 'pedit': editId = editId===id ? null : id; break;
-    case 'del': if(!confirm('¿Borrar este cliente de la planilla?')) return; S.clients.splice(i,1); editId=null; break;
+    case 'del': if(!confirm(`¿Borrar a "${c.name}" (${money(c.total)}) de la planilla?\n\nNo se puede deshacer.`)) return; S.clients.splice(i,1); editId=null; sel=null; mixOpen=null; rechOpen=null; break;
     case 'up': case 'down': {
       const todo = S.clients.filter(x=>!x.done), k = todo.indexOf(c), o = todo[k+(a==='up'?-1:1)];
       if(o){ const j=S.clients.indexOf(o); [S.clients[i],S.clients[j]]=[S.clients[j],S.clients[i]]; }
@@ -661,8 +712,8 @@ document.addEventListener('input', e=>{
   if(e.target.id==='colorpick'){ applyColor(e.target.value); return; }
   const f = e.target.dataset.f; if(!f) return;
   if(f==='cname'||f==='caddr'){ const c=get(e.target.dataset.id); if(c){ c[f==='cname'?'name':'addr']=e.target.value; save(); } return; }
-  if(f==='mname'||f==='maddr'||f==='mtot'){ manual[f==='mname'?'name':f==='maddr'?'addr':'total']=e.target.value; return; }
-  if(f==='prname'||f==='praddr'||f==='prtot'){ photoRows[+e.target.dataset.i][f==='prname'?'name':f==='praddr'?'addr':'total']=e.target.value; return; }
+  if(f==='mname'||f==='maddr'||f==='mtot'){ manual[f==='mname'?'name':f==='maddr'?'addr':'total']=e.target.value; borradorGuardar(); return; }
+  if(f==='prname'||f==='praddr'||f==='prtot'){ photoRows[+e.target.dataset.i][f==='prname'?'name':f==='praddr'?'addr':'total']=e.target.value; borradorGuardar(); return; }
   const c = get(e.target.dataset.id); if(!c) return;
   if(f==='total'){ c.total = num(e.target.value); if(c.rech && c.rech.tipo==='total') c.rech.monto = c.total;
     resync(c); save(); }
@@ -741,5 +792,19 @@ let lastRestantes = null;
 
 if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
 window.addEventListener('online', ()=>{ if(!listo || !conectado) cargarServidor(); else syncSave(); });
+// Se actualiza sola con lo que cambió otro celular, siempre que no haya nada sin enviar ni se esté editando.
+async function refrescarSiLibre(){
+  if(!TOKEN || !listo || !conectado || sinEnviar || syncing || cargando || !S.pid || document.visibilityState!=='visible') return;
+  const a = document.activeElement; if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+  if(sel || mixOpen || rechOpen || editId || pedi!==null || ordering || !['planilla','recorrido','resumen'].includes(S.tab)) return;
+  try{
+    const d = await api('GET','/api/planillas/'+S.pid);
+    if(d.version===S.ver || sinEnviar || syncing) return;
+    S.ver = d.version; S.clients = limpiarClientes(d.data.clients).clients; marcarEnviado(); render();
+  }catch(e){}
+}
+setInterval(refrescarSiLibre, 20000);
+document.addEventListener('visibilitychange', refrescarSiLibre);
+window.addEventListener('focus', refrescarSiLibre);
 render();
 if(TOKEN) cargarServidor();

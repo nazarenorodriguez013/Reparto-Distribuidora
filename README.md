@@ -4,7 +4,7 @@ App web para repartidores, pensada para usar desde el celular. Se carga la plani
 
 ## Qué hace
 
-- **Planilla:** carga de clientes con importe y dirección (los importes negativos se tratan como notas de crédito), a mano o leyendo la foto de la planilla con IA (hasta 3 fotos a la vez, desde la cámara o la galería). Los repetidos (mismo nombre e importe) se quitan solos.
+- **Planilla:** carga de clientes (se pueden borrar, con confirmación) con importe y dirección (los importes negativos se tratan como notas de crédito), a mano o leyendo la foto de la planilla con IA (hasta 3 fotos a la vez, desde la cámara o la galería). Los repetidos (mismo nombre e importe) se quitan solos.
 - **Recorrido:** el orden se arma tocando los clientes uno por uno. Cada cliente se marca con su medio de pago: efectivo, transferencia, cheque, E-Cheq, cuenta corriente, firmado, pago mixto, o rechazado (total o parcial, con motivo). En pago mixto y rechazo parcial el importe restante se calcula solo y se puede editar.
 - **Resumen:** total de todos los pedidos, lo rechazado, lo que tiene que haber por medio de pago y los clientes pendientes de cobro (firmado, cuenta corriente, sin cobrar, sin visitar).
 - **PDF:** exporta el resumen completo, con los clientes en el orden de la planilla original, y un PDF aparte solo con los pendientes.
@@ -14,7 +14,7 @@ App web para repartidores, pensada para usar desde el celular. Se carga la plani
 
 ## Cómo guarda los datos
 
-Las planillas viven **solo en la base de datos (Postgres)**. Cada cambio se envía al servidor al instante. Si el celular se queda sin señal, los cambios sin enviar quedan anotados en el celular y se suben solos cuando vuelve la conexión; apenas el servidor los confirma, se borran del celular. Si dos celulares editan la misma planilla a la vez, el que llega segundo no pisa al otro: sus cambios quedan en una planilla nueva y se avisa.
+Las planillas viven **solo en la base de datos (Postgres)**. Cada cambio se envía al servidor al instante. Si el celular se queda sin señal, los cambios sin enviar quedan anotados en el celular y se suben solos cuando vuelve la conexión; apenas el servidor los confirma, se borran del celular. Si dos celulares editan la misma planilla a la vez, los cambios de los dos se combinan por cliente y se avisa; cada celular también se actualiza solo con lo que cambió el otro.
 
 ## Tecnología
 

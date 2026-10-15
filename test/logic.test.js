@@ -63,3 +63,29 @@ test('lectura de foto: últimos dos dígitos decimales, signo y dudosos', () => 
   assert.equal(t('1.523').revisar, true);
   assert.equal(t('152300').revisar, false);
 });
+
+test('fusionar: combina los cambios de dos celulares por cliente', () => {
+  const c = (id, name, total = 1, extra = {}) => ({ id, name, total, ...extra });
+  const base = [c('a', 'A'), c('b', 'B'), c('c', 'C')];
+  // este celular: agregó D, cambió B, borró C
+  const local = [c('a', 'A'), c('b', 'B', 99), c('d', 'D')];
+  // el otro celular: agregó E, cambió A
+  const remoto = [c('a', 'A', 50), c('b', 'B'), c('c', 'C'), c('e', 'E')];
+  const r = L.fusionar(base, local, remoto);
+  assert.deepEqual(r.map(x => x.id), ['a', 'b', 'e', 'd'], 'se conserva lo del otro, se aplican los cambios propios y se borra lo borrado');
+  assert.equal(r.find(x => x.id === 'a').total, 50, 'lo que cambió el otro y acá no se tocó se conserva');
+  assert.equal(r.find(x => x.id === 'b').total, 99, 'lo que se cambió acá gana');
+  assert.ok(!r.find(x => x.id === 'c'), 'lo que se borró acá se borra');
+});
+
+test('fusionar: si este celular cambió el orden del recorrido, se respeta', () => {
+  const c = id => ({ id, name: id, total: 1 });
+  const r = L.fusionar([c('a'), c('b'), c('c')], [c('c'), c('a'), c('b')], [c('a'), c('b'), c('c'), c('d')]);
+  assert.deepEqual(r.map(x => x.id), ['c', 'a', 'b', 'd']);
+});
+
+test('fusionar: sin cambios locales queda igual que el servidor', () => {
+  const c = id => ({ id, name: id, total: 1 });
+  const base = [c('a'), c('b')];
+  assert.deepEqual(L.fusionar(base, base, [c('a'), c('b'), c('z')]).map(x => x.id), ['a', 'b', 'z']);
+});

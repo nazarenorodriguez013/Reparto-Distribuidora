@@ -83,7 +83,25 @@
     return { ok: true, clients };
   }
 
-  const api = { KEYS, r2, num, money, fmtInput, sum, rechMonto, debe, norm, sameKey, dedupe, canon, sinOrd, porPlanilla, idNuevo, limpiarClientes, MAX_CLIENTES };
+  // Combina los cambios de este celular (local, respecto de lo último sincronizado: base) con lo que hay hoy en el servidor (remoto).
+  // Se trabaja por cliente (id): lo que este celular agregó o modificó pisa al servidor, lo que borró se borra, y lo que
+  // cambió otro celular y acá no se tocó se conserva.
+  function fusionar(base, local, remoto) {
+    const mapa = arr => new Map((arr || []).map(c => [c.id, c]));
+    const B = mapa(base), L = mapa(local), R = mapa(remoto);
+    const out = new Map(R);
+    for (const [id, c] of L) { const b = B.get(id); if (!b || canon(b) !== canon(c)) out.set(id, c); }
+    for (const id of B.keys()) if (!L.has(id)) out.delete(id);
+    const idsBase = (base || []).filter(c => L.has(c.id)).map(c => c.id);
+    const idsLocal = (local || []).filter(c => B.has(c.id)).map(c => c.id);
+    const reordenado = canon(idsBase) !== canon(idsLocal);
+    let ids;
+    if (reordenado) ids = [...(local || []).map(c => c.id).filter(id => out.has(id)), ...(remoto || []).map(c => c.id).filter(id => out.has(id) && !L.has(id))];
+    else ids = [...(remoto || []).map(c => c.id).filter(id => out.has(id)), ...(local || []).map(c => c.id).filter(id => out.has(id) && !R.has(id))];
+    return ids.filter((id, i) => ids.indexOf(id) === i).map(id => out.get(id));
+  }
+
+  const api = { fusionar, KEYS, r2, num, money, fmtInput, sum, rechMonto, debe, norm, sameKey, dedupe, canon, sinOrd, porPlanilla, idNuevo, limpiarClientes, MAX_CLIENTES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Logic = api;
 })(typeof self !== 'undefined' ? self : this);
