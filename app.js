@@ -7,7 +7,7 @@ const LABEL = Object.fromEntries(METHODS);
 const KEY = 'reparto-v1';          // versiones anteriores guardaban la planilla acá: se sube una vez y se borra
 const OUT = 'reparto-pendiente';   // cambios que el servidor todavía no confirmó (se borra apenas los confirma)
 
-let S = {photo:null, clients:[], tab:'planilla', pid:null, ver:null};
+let S = {photo:null, clients:[], tab:'planilla', pid:null, ver:null, nombre:null};
 try{ S.tab = localStorage.getItem('reparto-tab') || 'planilla'; S.pid = Number(localStorage.getItem('reparto-pid')) || null; }catch(e){}
 const LEGACY = (()=>{ try{ return JSON.parse(localStorage.getItem(KEY)); }catch(e){ return null; } })();
 let listo = false;       // ya hay una planilla cargada (del servidor, o la última del celular si no hay conexión)
@@ -172,8 +172,8 @@ async function cargarServidor(){
     if(S.pid){ try{ d = await api('GET','/api/planillas/'+S.pid); }catch(e){ if(e.status!==404) throw e; S.pid = null; } }
     if(!d) d = await api('GET','/api/planillas/ultima');
     if(listo && JSON.stringify(S.clients)!==antes){ enviado = ''; }          // se editó durante la carga: no se pisa
-    else if(d && d.id){ S.pid = d.id; S.ver = d.version; S.clients = limpiarClientes(d.data.clients).clients; marcarEnviado(); }
-    else { S.pid = null; S.ver = null; S.clients = []; marcarEnviado(); }
+    else if(d && d.id){ S.pid = d.id; S.ver = d.version; S.nombre = d.nombre||null; S.clients = limpiarClientes(d.data.clients).clients; marcarEnviado(); }
+    else { S.pid = null; S.ver = null; S.nombre = null; S.clients = []; marcarEnviado(); }
     conectado = true; listo = true; sinEnviar = false; setSync('');
     normalizarOrden();
     if(enviado==='') scheduleSync();
@@ -270,8 +270,9 @@ function vHistorial(){
   if(hist==='error') return '<div class="card">No se pudo cargar el historial.</div>';
   if(!hist.length) return '<div class="card">Todavía no hay planillas guardadas.</div>';
   return `<div class="card"><h2>Historial de planillas</h2>${hist.map(h=>`<div class="item" style="flex-wrap:wrap">
-    <div class="nm"><b>${fechaLarga(h.created_at)}</b><span class="mut">${h.clientes} clientes · ${money(Number(h.total))}${h.usuario?' · '+esc(h.usuario):''}</span>${h.id===S.pid?' <span class="tag ok">Actual</span>':''}</div>
+    <div class="nm"><b>${h.nombre?esc(h.nombre):fechaLarga(h.created_at)}</b><span class="mut">${h.nombre?fechaLarga(h.created_at)+' · ':''}${h.clientes} clientes · ${money(Number(h.total))}${h.usuario?' · '+esc(h.usuario):''}</span>${h.id===S.pid?' <span class="tag ok">Actual</span>':''}</div>
     <button class="btn sec" data-a="hist-open" data-id="${h.id}">Abrir</button>
+    <button class="btn sec sm" data-a="hist-ren" data-id="${h.id}" aria-label="Cambiar nombre">✎</button>
     <button class="btn sec sm" data-a="hist-del" data-id="${h.id}">✕</button></div>`).join('')}</div>`;
 }
 const $ = s => document.querySelector(s);
@@ -323,7 +324,7 @@ function vLogin(){
 }
 function logout(){
   TOKEN=null; listo=false; conectado=false; cargando=false; clearTimeout(syncTimer); clearTimeout(cargaTimer); syncTimer=null;
-  S.clients=[]; S.pid=null; S.ver=null; enviado=''; base=[]; setSync('');   // lo que quedó sin enviar sigue anotado y se sube al volver a entrar
+  S.clients=[]; S.pid=null; S.ver=null; S.nombre=null; enviado=''; base=[]; setSync('');   // lo que quedó sin enviar sigue anotado y se sube al volver a entrar
   try{ localStorage.removeItem('reparto-token'); }catch(e){} loginErr=''; render();
 }
 async function doLogin(){
@@ -340,9 +341,11 @@ async function doLogin(){
   render();
 }
 
+const nombreMostrar = () => S.nombre ? esc(S.nombre) : '';
 function vPlanilla(){
   const c = S.clients;
   return `
+  <div class="card" style="display:flex;align-items:center;gap:10px"><div class="nm" style="flex:1;min-width:0"><b>${S.nombre?esc(S.nombre):'Planilla sin nombre'}</b></div><button class="btn sec sm" data-a="ren" aria-label="Cambiar nombre de la planilla">✎ Nombre</button></div>
   <div class="card">
     <h2>Cargar cliente</h2>
     ${leyendo?`<div class="hint">${esc(leyendo)}</div>`:''}
@@ -487,14 +490,14 @@ function pendientesHTML(){
 }
 function buildPendientes(){
   const hoy = new Date().toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'});
-  return `<h1>Reparto Nestlé</h1>
+  return `<h1>Reparto Nestlé${S.nombre?' — '+esc(S.nombre):''}</h1>
   <div>Pendientes a cobrar · Fecha: ${hoy}${USERNAME?' · Usuario: '+esc(USERNAME):''} · Visitados ${S.clients.filter(x=>x.done).length} de ${S.clients.length}</div>
   ${pendientesHTML()}`;
 }
 function imprimir(html, nombre){
   $('#reporte').innerHTML = html;
   const prev = document.title;
-  document.title = nombre + ' ' + new Date().toISOString().slice(0,10);   // nombre sugerido del archivo
+  document.title = (S.nombre ? nombre + ' ' + S.nombre.replace(/[\\/:*?"<>|]/g,'') : nombre) + ' ' + new Date().toISOString().slice(0,10);   // nombre sugerido del archivo
   window.addEventListener('afterprint', ()=>{ document.title = prev; }, {once:true});
   window.print();
 }
@@ -515,7 +518,7 @@ function buildReporte(){
   const rechazados = c.filter(x=>x.rech && rechMonto(x)>0);
   const fila = (a,b) => `<tr><td>${a}</td><td class="r">${money(b)}</td></tr>`;
   const pendHTML = pendientesHTML();
-  return `<h1>Reparto Nestlé</h1>
+  return `<h1>Reparto Nestlé${S.nombre?' — '+esc(S.nombre):''}</h1>
   <div>Fecha: ${hoy}${USERNAME?' · Usuario: '+esc(USERNAME):''} · Visitados ${c.filter(x=>x.done).length} de ${c.length}</div>
   <h2>Pedidos</h2>
   <table><tr class="tot"><td>Total de todos los pedidos</td><td class="r">${money(t.total)}</td></tr>
@@ -607,7 +610,7 @@ document.addEventListener('click', e=>{
     if(!confirm('¿Empezar una planilla nueva? La actual queda guardada en el historial.')) return;
     (async()=>{
       if(!await asegurarEnviado()){ alert('Hay cambios que todavía no se enviaron al servidor (sin señal). Esperá a que se envíen antes de empezar una planilla nueva.'); return; }
-      S.photo=null; S.clients=[]; S.pid=null; S.ver=null; S.tab='planilla'; manual={name:'',addr:'',total:''}; photoRows=[]; pedi=null; ordering=null; mixOpen=null;
+      S.photo=null; S.clients=[]; S.pid=null; S.ver=null; S.nombre=null; S.tab='planilla'; manual={name:'',addr:'',total:''}; photoRows=[]; pedi=null; ordering=null; mixOpen=null;
       marcarEnviado(); render();
     })();
     return;
@@ -631,13 +634,28 @@ document.addEventListener('click', e=>{
       cfgRun(async()=>{ await api('DELETE','/api/usuarios/'+id); await loadCfgLista(); }, 'Usuario borrado.'); return;
     case 'showpass': { const i=$('#l_pass'); i.type = i.type==='password'?'text':'password'; el.textContent = i.type==='password'?'Ver':'Ocultar'; return; }
     case 'color': applyColor(el.dataset.c); break;
+    case 'ren': case 'hist-ren': (async()=>{
+      const pid = el.dataset.a==='ren' ? S.pid : +id;
+      const actual = pid===S.pid ? S.nombre : ((hist||[]).find(h=>h.id===pid)||{}).nombre;
+      const n = prompt('Nombre de la planilla (vacío = sin nombre):', actual||'');
+      if(n===null) return;
+      try{
+        if(!pid){
+          const r = await api('POST','/api/planillas',{clients:S.clients, nombre:n}); S.pid = r.id; S.ver = r.version; S.nombre = n.trim().slice(0,80)||null; marcarEnviado();
+        } else {
+          const r = await api('PUT','/api/planillas/'+pid+'/nombre',{nombre:n});
+          if(pid===S.pid){ S.nombre = r.nombre; S.ver = r.version; }
+        }
+        if(S.tab==='historial') await loadHist(); else render();
+      }catch(e){ if(e.status!==401) setSync('No se pudo cambiar el nombre.', true); }
+    })(); return;
     case 'hist-open': (async()=>{
       if(!await asegurarEnviado()){ alert('Hay cambios que todavía no se enviaron al servidor (sin señal). Esperá a que se envíen.'); return; }
-      try{ const d = await api('GET','/api/planillas/'+id); S.pid=d.id; S.ver=d.version; S.clients=limpiarClientes(d.data.clients).clients; S.tab='planilla'; marcarEnviado(); normalizarOrden(); render(); }
+      try{ const d = await api('GET','/api/planillas/'+id); S.pid=d.id; S.ver=d.version; S.nombre=d.nombre||null; S.clients=limpiarClientes(d.data.clients).clients; S.tab='planilla'; marcarEnviado(); normalizarOrden(); render(); }
       catch(e){ if(e.status!==401) setSync('No se pudo abrir la planilla.', true); }
     })(); return;
     case 'hist-del': if(!confirm('¿Borrar esta planilla del historial?')) return;
-      api('DELETE','/api/planillas/'+id).then(()=>{ if(+id===S.pid){ S.pid=null; S.ver=null; S.clients=[]; marcarEnviado(); } loadHist(); }).catch(()=>setSync('No se pudo borrar.')); return;
+      api('DELETE','/api/planillas/'+id).then(()=>{ if(+id===S.pid){ S.pid=null; S.ver=null; S.nombre=null; S.clients=[]; marcarEnviado(); } loadHist(); }).catch(()=>setSync('No se pudo borrar.')); return;
     case 'madd': {
       if(!manual.name.trim()) return;
       const r = dedupe([manual], S.clients);
@@ -800,7 +818,7 @@ async function refrescarSiLibre(){
   try{
     const d = await api('GET','/api/planillas/'+S.pid);
     if(d.version===S.ver || sinEnviar || syncing) return;
-    S.ver = d.version; S.clients = limpiarClientes(d.data.clients).clients; marcarEnviado(); render();
+    S.ver = d.version; S.nombre = d.nombre||null; S.clients = limpiarClientes(d.data.clients).clients; marcarEnviado(); render();
   }catch(e){}
 }
 setInterval(refrescarSiLibre, 20000);

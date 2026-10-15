@@ -132,6 +132,24 @@ test('con base de datos', { skip: !DB && 'definí TEST_DATABASE_URL para correr 
       assert.equal((await sv.llamar('DELETE', `/api/planillas/${a.id}`, null, tk))[0], 200);
     });
 
+    await t.test('planillas: renombrar', async () => {
+      const [, a] = await sv.llamar('POST', '/api/planillas', { clients: [{ name: 'A', total: 1 }], nombre: '  Lunes\n norte  ' }, tk);
+      const [, g] = await sv.llamar('GET', `/api/planillas/${a.id}`, null, tk);
+      assert.equal(g.nombre, 'Lunes norte');
+      const [s, r] = await sv.llamar('PUT', `/api/planillas/${a.id}/nombre`, { nombre: 'x'.repeat(200) }, tk);
+      assert.equal(s, 200); assert.equal(r.nombre.length, 80); assert.equal(r.version, 2);
+      const [, l] = await sv.llamar('GET', '/api/planillas', null, tk);
+      assert.equal(l.planillas.find(p => p.id === a.id).nombre.length, 80);
+      const [, v] = await sv.llamar('PUT', `/api/planillas/${a.id}/nombre`, { nombre: '   ' }, tk);
+      assert.equal(v.nombre, null, 'vacío = sin nombre');
+      assert.equal((await sv.llamar('PUT', '/api/planillas/999999/nombre', { nombre: 'a' }, tk))[0], 404);
+      assert.equal((await sv.llamar('PUT', `/api/planillas/${a.id}/nombre`, { nombre: 'a' }))[0], 401);
+      assert.equal((await sv.llamar('GET', `/api/planillas/${a.id}/nombre`, null, tk))[0], 404);
+      const [, c] = await sv.llamar('GET', `/api/planillas/${a.id}`, null, tk);
+      assert.equal(c.data.clients.length, 1, 'renombrar no toca los clientes');
+      await sv.llamar('DELETE', `/api/planillas/${a.id}`, null, tk);
+    });
+
     await t.test('por defecto las planillas son compartidas (como siempre) y la última es la última con clientes', async () => {
       const [, ana] = await sv.llamar('POST', '/api/login', { user: 'ana', pass: 'nueva-clave-1' });
       const [, yo] = await sv.llamar('GET', '/api/yo', null, tk);

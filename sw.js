@@ -1,5 +1,5 @@
 // Service worker mínimo: hace la app instalable y la abre aunque no haya señal.
-const CACHE = 'reparto-v3';
+const CACHE = 'reparto-v4';
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(['/', '/app.js', '/logic.js', '/styles.css', '/manifest.json', '/icon-192.png'])).then(() => self.skipWaiting()));
 });

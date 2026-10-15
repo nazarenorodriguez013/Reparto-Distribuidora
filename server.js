@@ -45,6 +45,7 @@ const dbReady = pool ? (async () => {
     es_admin BOOLEAN NOT NULL DEFAULT false, creado TIMESTAMPTZ NOT NULL DEFAULT now())`);
   await pool.query('ALTER TABLE planillas ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1');
   await pool.query('ALTER TABLE planillas ADD COLUMN IF NOT EXISTS usuario_id INTEGER');
+  await pool.query('ALTER TABLE planillas ADD COLUMN IF NOT EXISTS nombre TEXT');
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS usuarios_nombre_idx ON usuarios (lower(nombre))');
   await pool.query('CREATE TABLE IF NOT EXISTS config (clave TEXT PRIMARY KEY, valor TEXT NOT NULL)');
   const n = (await pool.query('SELECT count(*)::int AS n FROM usuarios')).rows[0].n;
@@ -218,18 +219,26 @@ async function cuentas(req, res, url, yo) {
 }
 
 // Cada usuario ve y edita solo sus planillas; el administrador puede ver y abrir todas.
+const limpiarNombre = v => String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || null;
 async function planillas(req, res, url, yo) {
   if (!pool) return send(res, 503, { error: 'Base de datos no configurada' });
   await dbReady;
-  const m = /^\/api\/planillas(?:\/(\d+|ultima))?$/.exec(url);
+  const m = /^\/api\/planillas(?:\/(\d+|ultima))?(\/nombre)?$/.exec(url);
   if (!m) return send(res, 404, { error: 'No encontrado' });
   const id = m[1];
   const admin = !!yo.es_admin;
   const compartidas = await planillasCompartidas();
   // $1 = id del usuario. Compartidas: todos ven todo. Por usuario: cada uno ve las suyas y el administrador todas.
   const acceso = (compartidas || admin) ? '$1::int IS NOT NULL' : 'p.usuario_id = $1';
+  if (m[2]) {
+    if (!/^\d+$/.test(id || '') || req.method !== 'PUT') return send(res, 404, { error: 'No encontrado' });
+    const b = await body(req, 1e4);
+    const nombre = limpiarNombre(b.nombre);
+    const r = await pool.query(`UPDATE planillas p SET nombre=$3, version=p.version+1 WHERE p.id=$2 AND (${acceso}) RETURNING p.version, p.nombre`, [yo.id, id, nombre]);
+    return r.rowCount ? send(res, 200, { ok: true, version: r.rows[0].version, nombre: r.rows[0].nombre }) : send(res, 404, { error: 'No existe' });
+  }
   if (!id && req.method === 'GET') {
-    const r = await pool.query(`SELECT p.id, p.created_at, p.updated_at, u.nombre AS usuario,
+    const r = await pool.query(`SELECT p.id, p.nombre, p.created_at, p.updated_at, u.nombre AS usuario,
       jsonb_array_length(p.data->'clients') AS clientes,
       (SELECT COALESCE(SUM((c->>'total')::numeric),0) FROM jsonb_array_elements(p.data->'clients') c) AS total
       FROM planillas p LEFT JOIN usuarios u ON u.id = p.usuario_id
@@ -240,16 +249,16 @@ async function planillas(req, res, url, yo) {
     const b = await body(req, 2e6);
     const v = Logic.limpiarClientes(b.clients === undefined ? [] : b.clients);
     if (!v.ok) return send(res, 400, { error: v.error });
-    const r = await pool.query('INSERT INTO planillas (data, usuario_id) VALUES ($1, $2) RETURNING id, version', [JSON.stringify({ clients: v.clients }), yo.id]);
+    const r = await pool.query('INSERT INTO planillas (data, usuario_id, nombre) VALUES ($1, $2, $3) RETURNING id, version', [JSON.stringify({ clients: v.clients }), yo.id, limpiarNombre(b.nombre)]);
     return send(res, 200, { id: r.rows[0].id, version: r.rows[0].version });
   }
   if (id === 'ultima' && req.method === 'GET') {
     // la última planilla con clientes (si todas están vacías, la más reciente); en modo por usuario, solo entre las propias
-    const r = await pool.query(`SELECT p.id, p.data, p.version FROM planillas p WHERE ${compartidas ? '$1::int IS NOT NULL' : 'p.usuario_id = $1'} ORDER BY (jsonb_array_length(p.data->'clients') > 0) DESC, p.id DESC LIMIT 1`, [yo.id]);
+    const r = await pool.query(`SELECT p.id, p.nombre, p.data, p.version FROM planillas p WHERE ${compartidas ? '$1::int IS NOT NULL' : 'p.usuario_id = $1'} ORDER BY (jsonb_array_length(p.data->'clients') > 0) DESC, p.id DESC LIMIT 1`, [yo.id]);
     return send(res, 200, r.rows[0] || {});
   }
   if (id && req.method === 'GET') {
-    const r = await pool.query(`SELECT p.id, p.data, p.version FROM planillas p WHERE p.id=$2 AND (${acceso})`, [yo.id, id]);
+    const r = await pool.query(`SELECT p.id, p.nombre, p.data, p.version FROM planillas p WHERE p.id=$2 AND (${acceso})`, [yo.id, id]);
     return r.rows[0] ? send(res, 200, r.rows[0]) : send(res, 404, { error: 'No existe' });
   }
   if (id && req.method === 'PUT') {

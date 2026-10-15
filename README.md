@@ -8,7 +8,7 @@ App web para repartidores, pensada para usar desde el celular. Se carga la plani
 - **Recorrido:** el orden se arma tocando los clientes uno por uno. Cada cliente se marca con su medio de pago: efectivo, transferencia, cheque, E-Cheq, cuenta corriente, firmado, pago mixto, o rechazado (total o parcial, con motivo). En pago mixto y rechazo parcial el importe restante se calcula solo y se puede editar.
 - **Resumen:** total de todos los pedidos, lo rechazado, lo que tiene que haber por medio de pago y los clientes pendientes de cobro (firmado, cuenta corriente, sin cobrar, sin visitar).
 - **PDF:** exporta el resumen completo, con los clientes en el orden de la planilla original, y un PDF aparte solo con los pendientes.
-- **Historial:** las planillas anteriores quedan guardadas y se pueden volver a abrir.
+- **Historial:** las planillas anteriores quedan guardadas y se pueden volver a abrir. Cada planilla se puede renombrar (botón ✎ en Planilla o en Historial); el nombre aparece en los PDF.
 - **Configuración:** color de la app, cambio de nombre de usuario y contraseña, y alta de usuarios (solo el administrador).
 - **Instalable en el celular** (PWA) y con aviso cuando no hay señal.
 
